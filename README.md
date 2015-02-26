@@ -1,2 +1,2 @@
 # luajit-bnet
-LuaJIT's FFI port for BNet
+LuaJIT's FFI port for Eiksoft's BNet
