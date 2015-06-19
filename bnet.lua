@@ -490,7 +490,7 @@ function ReadAvail(Stream)
 	return 0
 end
 
-TUDPStream = {
+local TUDPStream = {
 	Timeout = 0,
 	Socket = 0,
 	LocalIP = 0,
@@ -736,7 +736,7 @@ function RecvUDPMsg(Stream)
 	if Result == SOCKET_ERROR or Result == 0 then
 		return false
 	else
-		Stream.MessageIP = StringIP(tonumber(MessageIP))
+		Stream.MessageIP = tonumber(MessageIP)
 		Stream.MessagePort = tonumber(MessagePort)
 		Stream.RecvSize = Stream.RecvSize + Result
 		return MessageIP
@@ -804,7 +804,7 @@ function UDPTimeouts(Recv)
 	end
 end
 
-TTCPStream = {
+local TTCPStream = {
 	Timeouts = {
 		[0] = 10000,
 		[1] = 0
