@@ -414,15 +414,13 @@ local function recv_(socket, buf, size, flags)
 	return sock.recv(socket, buf, size, flags)
 end
 
-local function recvfrom_(socket, buf, size, flags, ip, port)
+local function recvfrom_(socket, buf, size, flags)
 	local sa = ffi.new("struct sockaddr_in")
 	ffi.fill(sa, 0, ffi.sizeof(sa))
 
 	local sasize = ffi.new("int[1]", ffi.sizeof(sa))
 	local count = sock.recvfrom(socket, buf, size, flags, ffi.cast("struct sockaddr *", sa), sasize)
-	ip[0] = ntohl_(sa.sin_addr.s_addr)
-	port[0] = ntohs_(sa.sin_port)
-	return count
+	return count, ntohl_(sa.sin_addr.s_addr), ntohs_(sa.sin_port)
 end
 
 local function setsockopt_(socket, level, optname, optval, count)
@@ -533,13 +531,12 @@ function TUDPStream:ReadLine()
 	local Buffer = ""
 	local Size = 0
 	while true do
-		local Char = ffi.new("char[1]")
-		local Result = self:Read(Char, 1)
-		if self:Size() == 0 or Char[0] == 10 then
+		local Char = self:ReadByte()
+		if self:Size() == 0 or Char == 10 or Char == 0 then
 			break
 		end
-		if Char[0] ~= 13 and Char[0] ~= 0 then
-			Buffer = Buffer .. char(Char[0])
+		if Char ~= 13 then
+			Buffer = Buffer .. char(Char)
 		end
 	end
 	return Buffer
@@ -583,25 +580,24 @@ function TUDPStream:WriteString(StringIP)
 end
 
 function TUDPStream:Read(Buffer, Size)
-	local Temp
+	local NewBuffer, PrevBuffer
 	if Size > self.RecvSize then
 		Size = self.RecvSize
 	end
-
 	if Size > 0 then
 		ffi.copy(Buffer, self.RecvBuffer, Size)
 		if Size < self.RecvSize then
-			Temp = C.malloc(self.RecvSize - Size)
-			ffi.copy(Temp, self.RecvBuffer, self.RecvSize - Size)
+			NewBuffer = C.malloc(self.RecvSize - Size)
+			PrevBuffer = ffi.string(self.RecvBuffer)
+			ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
 			C.free(self.RecvBuffer)
-			self.RecvBuffer = Temp
+			self.RecvBuffer = NewBuffer
 			self.RecvSize = self.RecvSize - Size
 		else
 			C.free(self.RecvBuffer)
 			self.RecvSize = 0
 		end
 	end
-
 	return Size
 end
 
@@ -623,8 +619,7 @@ function TUDPStream:Write(Buffer, Size)
 
 	local Temp = C.malloc(self.SendSize + Size)
 	if self.SendSize > 0 then
-		ffi.copy(Temp, self.SendBuffer, self.SendSize)
-		ffi.copy(Temp + self.SendSize, Buffer, Size)
+		ffi.copy(Temp, ffi.string(self.SendBuffer) .. ffi.string(Buffer), self.SendSize + Size)
 		C.free(self.SendBuffer)
 		self.SendBuffer = Temp
 		self.SendSize = self.SendSize + Size
@@ -693,10 +688,11 @@ function CreateUDPStream(Port)
 
 	local IP = inet_ntoa_(Address.sin_addr)
 	local Port = ntohs_(Address.sin_port)
-	local Stream = setmetatable({
+	local Stream = setmetatable(
+	{
 		Socket = Socket,
 		LocalIP = ffi.string(IP),
-		LocalPort = Port
+		LocalPort = Port,
 	}, UDP)
 	return Stream
 end
@@ -728,23 +724,20 @@ function RecvUDPMsg(Stream)
 	end
 
 	if Stream.RecvSize > 0 then
-		local Temp = C.malloc(Stream.RecvSize + Size)
-		ffi.copy(Temp, Stream.RecvBuffer, Stream.RecvSize)
+		local NewBuffer = C.malloc(Stream.RecvSize + Size)
+		ffi.copy(NewBuffer, Stream.RecvBuffer, Stream.RecvSize)
 		C.free(Stream.RecvBuffer)
-		Stream.RecvBuffer = Temp
+		Stream.RecvBuffer = NewBuffer
 	else
 		Stream.RecvBuffer = C.malloc(Size)
 	end
 
-	local MessageIP = ffi.new("int[1]")
-	local MessagePort = ffi.new("int[1]")
-	local Result = recvfrom_(Stream.Socket, Stream.RecvBuffer, Size, 0, MessageIP, MessagePort)
-
+	local Result, MessageIP, MessagePort = recvfrom_(Stream.Socket, Stream.RecvBuffer, Size, 0, MessageIP, MessagePort)
 	if Result == SOCKET_ERROR or Result == 0 then
 		return false
 	else
-		Stream.MessageIP = StringIP(tonumber(MessageIP[0]))
-		Stream.MessagePort = tonumber(MessagePort[0])
+		Stream.MessageIP = StringIP(tonumber(MessageIP))
+		Stream.MessagePort = tonumber(MessagePort)
 		Stream.RecvSize = Stream.RecvSize + Result
 		return MessageIP
 	end
@@ -776,10 +769,11 @@ function SendUDPMsg(Stream, IP, Port)
 		C.free(Stream.SendBuffer)
 		Stream.SendSize = 0
 	else
-		local Temp = C.malloc(Stream.SendSize - Result)
-		ffi.copy(Temp, Stream.SendBuffer + Result, Stream.SendSize - Result)
+		local NewBuffer = C.malloc(Stream.SendSize - Result)
+		local PrevBuffer = ffi.string(Stream.SendBuffer)
+		ffi.copy(Temp, PrevBuffer:sub(Result + 1), Stream.SendSize - Result)
 		C.free(Stream.SendBuffer)
-		Stream.SendBuffer = Temp
+		Stream.SendBuffer = NewBuffer
 	end
 end
 
