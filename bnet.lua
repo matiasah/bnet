@@ -787,12 +787,12 @@ function SendUDPMsg(Stream, IP, Port)
 	assert(IP)
 	assert(Port)
 	if Stream.Socket == INVALID_SOCKET or Stream.SendSize == 0 then
-		return 0
+		return false
 	end
 
 	local Write = ffi.new("int[1]", Stream.Socket)
 	if select_(0, nil, 1, Write, 0, nil, 0) ~= 1 then
-		return 0
+		return false
 	end
 
 	if not Port or Port == 0 then
@@ -801,22 +801,22 @@ function SendUDPMsg(Stream, IP, Port)
 
 	local Result = sendto_(Stream.Socket, Stream.SendBuffer, Stream.SendSize, 0, IP, Port)
 	if Result == SOCKET_ERROR or Result == 0 then
-		return 0
+		return false
 	end
 
 	if Result == Stream.SendSize then
 		C.free(Stream.SendBuffer)
 		Stream.SendSize = 0
-		return 1
+		return true
 	else
 		local NewBuffer = C.malloc(Stream.SendSize - Result)
 		local PrevBuffer = ffi.string(Stream.SendBuffer)
 		ffi.copy(Temp, PrevBuffer:sub(Result + 1), Stream.SendSize - Result)
 		C.free(Stream.SendBuffer)
 		Stream.SendBuffer = NewBuffer
-		return 1
+		return true
 	end
-	return 0
+	return false
 end
 
 function UDPMsgIP(Stream)
