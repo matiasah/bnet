@@ -2,7 +2,6 @@ local ffi = require("ffi")
 local bit = require("bit")
 local fd_lib
 
-local print = print
 local tostring = tostring
 local tonumber = tonumber
 local strsub = string.sub
@@ -125,7 +124,6 @@ if ffi.os == "Windows" then
 		int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timeval *timeout);
 		int send(SOCKET s, const char *buf, int len, int flags);
 		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
-		int setsockopt(SOCKET s, int level, int optname, const char *optval, int optlen);
 		int shutdown(SOCKET s, int how);
 		struct hostent *gethostbyname(const char *name);
 		struct hostent *gethostbyaddr(const char *addr, int len, int type);
@@ -253,7 +251,6 @@ else
 		int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timeval *timeout);
 		int send(SOCKET s, const char *buf, int len, int flags);
 		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
-		int setsockopt(SOCKET s, int level, int optname, const char *optval, int optlen);
 		int shutdown(SOCKET s, int how);
 		struct hostent *gethostbyname(const char *name);
 		struct hostent *gethostbyaddr(const char *addr, int len, int type);
@@ -278,34 +275,6 @@ else
 	end
 end
 
-local function inet_addr_(cp)
-	return sock.inet_addr(cp)
-end
-
-local function inet_ntoa_(_in)
-	return sock.inet_ntoa(_in)
-end
-
-local function htons_(n)
-	return sock.htons(n)
-end
-
-local function ntohs_(n)
-	return sock.ntohs(n)
-end
-
-local function htonl_(n)
-	return sock.htonl(n)
-end
-
-local function ntohl_(n)
-	return sock.ntohl(n)
-end
-
-local function socket_(addr_type, comm_type, protocol)
-	return sock.socket(addr_type, comm_type, protocol)
-end
-
 local closesocket_
 if ffi.os == "Windows" then
 	function closesocket_(s)
@@ -325,8 +294,8 @@ local function bind_(socket, addr_type, port)
 
 	ffi.fill(sa, 0, ffi.sizeof(sa))
 	sa.sin_family = addr_type
-	sa.sin_addr.s_addr = htonl_(INADDR_ANY)
-	sa.sin_port = htons_(port)
+	sa.sin_addr.s_addr = sock.htonl(INADDR_ANY)
+	sa.sin_port = sock.htons(port)
 
 	local _sa = ffi.cast("struct sockaddr *", sa)
 	return sock.bind(socket, _sa, ffi.sizeof(sa))
@@ -351,21 +320,13 @@ local function connect_(socket, addr, addr_type, addr_len, port)
 	if addr_type == AF_INET then
 		ffi.fill(sa, 0, ffi.sizeof(sa))
 		sa.sin_family = addr_type
-		sa.sin_port = htons_(port)
+		sa.sin_port = sock.htons(port)
 		ffi.copy(sa.sin_addr, addr, addr_len)
 
 		local Addr = ffi.cast("struct sockaddr *", sa)
 		return sock.connect(socket, Addr, ffi.sizeof(sa))
 	end
 	return SOCKET_ERROR
-end
-
-local function listen_(socket, backlog)
-	return sock.listen(socket, backlog)
-end
-
-local function accept_(socket, addr, addr_len)
-	return sock.accept(socket, addr, addr_len)
 end
 
 local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, millis)
@@ -443,22 +404,14 @@ local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, mil
 	return r
 end
 
-local function send_(socket, buf, size, flags)
-	return sock.send(socket, buf, size, flags)
-end
-
 local function sendto_(socket, buf, size, flags, dest_ip, dest_port)
 	local sa = ffi.new("struct sockaddr_in")
 	ffi.fill(sa, 0, ffi.sizeof(sa))
 
 	sa.sin_family = AF_INET
-	sa.sin_addr.s_addr = inet_addr_(dest_ip)
-	sa.sin_port = htons_(dest_port)
+	sa.sin_addr.s_addr = sock.inet_addr(dest_ip)
+	sa.sin_port = sock.htons(dest_port)
 	return sock.sendto(socket, buf, size, flags, ffi.cast("struct sockaddr *", sa), ffi.sizeof(sa))
-end
-
-local function recv_(socket, buf, size, flags)
-	return sock.recv(socket, buf, size, flags)
 end
 
 local function recvfrom_(socket, buf, size, flags)
@@ -467,27 +420,7 @@ local function recvfrom_(socket, buf, size, flags)
 
 	local sasize = ffi.new("int[1]", ffi.sizeof(sa))
 	local count = sock.recvfrom(socket, buf, size, flags, ffi.cast("struct sockaddr *", sa), sasize)
-	return count, inet_ntoa_(sa.sin_addr), ntohs_(sa.sin_port)
-end
-
-local function setsockopt_(socket, level, optname, optval, count)
-	return sock.setsockopt(socket, level, optname, optval, count)
-end
-
-local function getsockopt_(socket, level, optname, optval, count)
-	return sock.getsockopt(socket, level, optname, optval, count)
-end
-
-local function shutdown_(socket, how)
-	return sock.shutdown(socket, how)
-end
-
-local function getsockname_(socket, addr, len)
-	return sock.getsockname(socket, addr, len)
-end
-
-local function getpeername_(socket, addr, len)
-	return sock.getpeername(socket, addr, len)
+	return count, sock.inet_ntoa(sa.sin_addr), sock.ntohs(sa.sin_port)
 end
 
 local function Shl(A, B)
@@ -512,29 +445,18 @@ end
 
 function IntIP(IP)
 	assert(IP)
-	local InetADDR = inet_addr_(IP)
-	local HTONL = htonl_(InetADDR)
+	local InetADDR = sock.inet_addr(IP)
+	local HTONL = sock.htonl(InetADDR)
 	return HTONL
 end
 
 function StringIP(IP)
 	assert(IP)
-	local HTONL = htonl_(IP)
+	local HTONL = sock.htonl(IP)
 	local Addr = ffi.new("struct in_addr")
 	Addr.s_addr = HTONL
-	local NTOA = inet_ntoa_(Addr)
+	local NTOA = sock.inet_ntoa(Addr)
 	return ffi.string(NTOA)
-end
-
-function ReadAvail(Stream)
-	assert(Stream)
-	local Size = ffi.new("int[1]")
-	if Stream.UDP then
-		return Stream.RecvSize
-	elseif Stream.TCP then
-		return Stream:Size()
-	end
-	return 0
 end
 
 local TUDPStream = {}
@@ -696,7 +618,7 @@ end
 
 function TUDPStream:Close()
 	if self.Socket ~= INVALID_SOCKET then
-		shutdown_(self.Socket, SD_BOTH)
+		sock.shutdown(self.Socket, SD_BOTH)
 		closesocket_(self.Socket)
 		self.Socket = INVALID_SOCKET
 	end
@@ -706,13 +628,13 @@ function CreateUDPStream(Port)
 	if not Port then
 		Port = 0
 	end
-	local Socket = socket_(AF_INET, SOCK_DGRAM, 0)
+	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
 	if Socket == INVALID_SOCKET then
 		return nil
 	end
 
 	if bind_(Socket, AF_INET, Port) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
@@ -722,16 +644,16 @@ function CreateUDPStream(Port)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(Address)
 
-	if getsockname_(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
 
 	local Stream = ffi.new("struct TUDPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = inet_ntoa_(Address.sin_addr)
-	Stream.LocalPort = ntohs_(Address.sin_port)
+	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
+	Stream.LocalPort = sock.ntohs(Address.sin_port)
 	Stream.UDP = true
 	return Stream
 end
@@ -953,7 +875,7 @@ function TTCPStream:Read(Buffer, Size)
 		return 0
 	end
 
-	local Result = recv_(self.Socket, Buffer, Size, 0)
+	local Result = sock.recv(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
 		return 0
 	end
@@ -981,7 +903,7 @@ function TTCPStream:Write(Buffer, Size)
 		return 0
 	end
 
-	local Result = send_(self.Socket, Buffer, Size, 0)
+	local Result = sock.send(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
 		return 0
 	end
@@ -1028,7 +950,7 @@ end
 
 function TTCPStream:Close()
 	if self.Socket ~= INVALID_SOCKET then
-		shutdown_(self.Socket, SD_BOTH)
+		sock.shutdown(self.Socket, SD_BOTH)
 		closesocket_(self.Socket)
 		self.Socket = INVALID_SOCKET
 	end
@@ -1046,7 +968,7 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 		LocalPort = 0
 	end
 
-	local ServerIP = inet_addr_(Server)
+	local ServerIP = sock.inet_addr(Server)
 	local PAddress
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(Server)
@@ -1065,13 +987,13 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 		ServerIP = bit.bor(Shl(NAddress[3], 24), Shl(NAddress[2], 16), Shl(NAddress[1], 8), NAddress[0])
 	end
 
-	local Socket = socket_(AF_INET, SOCK_STREAM, 0)
+	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
 		return nil
 	end
 
 	if bind_(Socket, AF_INET, LocalPort) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
@@ -1081,23 +1003,23 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(SAddress)
 
-	if getsockname_(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = inet_ntoa_(SAddress.sin_addr)
-	Stream.LocalPort = ntohs_(SAddress.sin_port)
+	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
+	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
 	Stream.TCP = true
 
 	local ServerPtr = ffi.new("int[1]")
 	ServerPtr[0] = ServerIP
 
 	if connect_(Socket, ServerPtr, AF_INET, 4, ServerPort) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
@@ -1114,13 +1036,13 @@ function CreateTCPServer(Port)
 		Port = 0
 	end
 
-	local Socket = socket_(AF_INET, SOCK_STREAM, 0)
+	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
 		return nil
 	end
 
 	if bind_(Socket, AF_INET, Port) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
@@ -1130,20 +1052,20 @@ function CreateTCPServer(Port)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(SAddress)
 
-	if getsockname_(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = inet_ntoa_(SAddress.sin_addr)
-	Stream.LocalPort = ntohs_(SAddress.sin_port)
+	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
+	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
 	Stream.TCP = true
 
-	if listen_(Socket, BNET_MAX_CLIENTS) == SOCKET_ERROR then
-		shutdown_(Socket, SD_BOTH)
+	if sock.listen(Socket, BNET_MAX_CLIENTS) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
 	end
@@ -1166,15 +1088,15 @@ function AcceptTCPStream(Stream)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(Address)
 
-	local Socket = accept_(Stream.Socket, Addr, SizePtr)
+	local Socket = sock.accept(Stream.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
 		return nil
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = inet_ntoa_(Address.sin_addr)
-	Stream.LocalPort = ntohs_(Address.sin_port)
+	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
+	Stream.LocalPort = sock.ntohs(Address.sin_port)
 	Stream.TCP = true
 	return Stream
 end
