@@ -9,13 +9,6 @@ local setmetatable = setmetatable
 local assert = assert
 local char = string.char
 
-local function isnil(object)
-	if object then
-		return strsub(tostring(object), -4) == "NULL"
-	end
-	return true
-end
-
 ffi.cdef [[
 	void free (void* ptr);
 	void *malloc(size_t size);
@@ -305,14 +298,14 @@ end
 
 local function gethostbyaddr_(addr, addr_len, addr_type)
 	local e = sock.gethostbyaddr(addr, addr_len, addr_type)
-	if not isnil(e) then
+	if e ~= nil then
 		return e.h_name
 	end
 end
 
 local function gethostbyname_(name)
 	local e = sock.gethostbyname(name)
-	if not isnil(e) then
+	if e ~= nil then
 		return e.h_addr_list, e.h_addrtype, e.h_length
 	end
 end
@@ -434,12 +427,12 @@ end
 function CountHostIPs(Host)
 	assert(Host)
 	local Addresses, AdressType, AddressLength = gethostbyname_(Host)
-	if isnil(Addresses) or AddressType ~= AF_INET or AddressLength ~= 4 then
+	if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
 		return 0
 	end
 
 	local Count = 0
-	while not isnil(Addresses[Count]) do
+	while Addresses[Count] ~= nil do
 		Count = Count + 1
 	end
 	return Count
@@ -981,10 +974,10 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	local PAddress
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(Server)
-		if isnil(Addresses) or AddressType ~= AF_INET or AddressLength ~= 4 then
+		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
 			return nil
 		end
-		if isnil(Addresses[0]) then
+		if Addresses[0] == nil then
 			return nil
 		end
 		PAddress = Addresses[0]
