@@ -44,6 +44,30 @@ if ffi.os == "Windows" then
 
 	sock = ffi.load("ws2_32")
 	ffi.cdef [[
+		typedef uint16_t u_short;
+		typedef uint32_t u_int;
+		typedef unsigned long u_long;
+		typedef uintptr_t SOCKET;
+		struct TUDPStream {
+			int Timeout;
+			SOCKET Socket;
+			char * LocalIP;
+			int LocalPort;
+			char * MessageIP;
+			int MessagePort;
+			int RecvSize;
+			int SendSize;
+			void * RecvBuffer;
+			void * SendBuffer;
+			bool UDP;
+		};
+		struct TTCPStream {
+			int Timeouts[2];
+			SOCKET Socket;
+			char * LocalIP;
+			int LocalPort;
+			bool TCP;
+		};
 		struct sockaddr {
 			unsigned short sa_family;
 			char sa_data[14];
@@ -78,11 +102,10 @@ if ffi.os == "Windows" then
 			long tv_sec;
 			long tv_usec;
 		} timeval;
-		typedef uint16_t u_short;
-		typedef uint32_t u_int;
-		typedef unsigned long u_long;
-		typedef uintptr_t SOCKET;
-		typedef struct fd_set {u_int fd_count;SOCKET  fd_array[64];} fd_set;
+		typedef struct fd_set {
+			u_int fd_count;
+			SOCKET  fd_array[64];
+		} fd_set;
 		u_long htonl(u_long hostlong);
 		u_short htons(u_short hostshort);
 		u_short ntohs(u_short netshort);
@@ -159,6 +182,30 @@ else
 	sock = ffi.load("sys/socket.h")
 	netdb = ffi.load("netdb.h")
 	ffi.cdef [[
+		typedef uint16_t u_short;
+		typedef uint32_t u_int;
+		typedef unsigned long u_long;
+		typedef uintptr_t SOCKET;
+		struct TUDPStream {
+			int Timeout;
+			SOCKET Socket;
+			char * LocalIP;
+			int LocalPort;
+			char * MessageIP;
+			int MessagePort;
+			int RecvSize;
+			int SendSize;
+			void * RecvBuffer;
+			void * SendBuffer;
+			bool UDP;
+		};
+		struct TTCPStream {
+			int Timeouts[2];
+			SOCKET Socket;
+			char * LocalIP;
+			int LocalPort;
+			bool TCP;
+		};
 		struct sockaddr {
 			unsigned short sa_family;
 			char sa_data[14];
@@ -183,11 +230,10 @@ else
 			long int tv_sec;
 			long int tv_usec;
 		};
-		typedef uint16_t u_short;
-		typedef uint32_t u_int;
-		typedef unsigned long u_long;
-		typedef uintptr_t SOCKET;
-		typedef struct fd_set {u_int fd_count;SOCKET  fd_array[64];} fd_set;
+		typedef struct fd_set {
+			u_int fd_count;
+			SOCKET  fd_array[64];
+		} fd_set;
 		u_long htonl(u_long hostlong);
 		u_short htons(u_short hostshort);
 		u_short ntohs(u_short netshort);
@@ -404,8 +450,9 @@ end
 local function sendto_(socket, buf, size, flags, dest_ip, dest_port)
 	local sa = ffi.new("struct sockaddr_in")
 	ffi.fill(sa, 0, ffi.sizeof(sa))
+
 	sa.sin_family = AF_INET
-	sa.sin_addr.s_addr = htonl_(dest_ip)
+	sa.sin_addr.s_addr = inet_addr_(dest_ip)
 	sa.sin_port = htons_(dest_port)
 	return sock.sendto(socket, buf, size, flags, ffi.cast("struct sockaddr *", sa), ffi.sizeof(sa))
 end
@@ -420,7 +467,7 @@ local function recvfrom_(socket, buf, size, flags)
 
 	local sasize = ffi.new("int[1]", ffi.sizeof(sa))
 	local count = sock.recvfrom(socket, buf, size, flags, ffi.cast("struct sockaddr *", sa), sasize)
-	return count, ntohl_(sa.sin_addr.s_addr), ntohs_(sa.sin_port)
+	return count, inet_ntoa_(sa.sin_addr), ntohs_(sa.sin_port)
 end
 
 local function setsockopt_(socket, level, optname, optval, count)
@@ -490,18 +537,13 @@ function ReadAvail(Stream)
 	return 0
 end
 
-local TUDPStream = {
-	Timeout = 0,
-	Socket = 0,
-	LocalIP = 0,
-	LocalPort = 0,
-	MessageIP = 0,
-	MessagePort = 0,
-	RecvSize = 0,
-	SendSize = 0,
-	UDP = true
-}
-UDP = {__index = TUDPStream}
+local TUDPStream = {}
+local UDP = {__index = TUDPStream}
+ffi.metatype("struct TUDPStream", UDP)
+
+function UDP:__gc()
+	self:Close()
+end
 
 function TUDPStream:ReadByte()
 	local n = ffi.new("char[1]")
@@ -686,14 +728,11 @@ function CreateUDPStream(Port)
 		return nil
 	end
 
-	local IP = inet_ntoa_(Address.sin_addr)
-	local Port = ntohs_(Address.sin_port)
-	local Stream = setmetatable(
-	{
-		Socket = Socket,
-		LocalIP = ffi.string(IP),
-		LocalPort = Port,
-	}, UDP)
+	local Stream = ffi.new("struct TUDPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = inet_ntoa_(Address.sin_addr)
+	Stream.LocalPort = ntohs_(Address.sin_port)
+	Stream.UDP = true
 	return Stream
 end
 
@@ -736,8 +775,8 @@ function RecvUDPMsg(Stream)
 	if Result == SOCKET_ERROR or Result == 0 then
 		return false
 	else
-		Stream.MessageIP = tonumber(MessageIP)
-		Stream.MessagePort = tonumber(MessagePort)
+		Stream.MessageIP = MessageIP
+		Stream.MessagePort = MessagePort
 		Stream.RecvSize = Stream.RecvSize + Result
 		return MessageIP
 	end
@@ -748,12 +787,12 @@ function SendUDPMsg(Stream, IP, Port)
 	assert(IP)
 	assert(Port)
 	if Stream.Socket == INVALID_SOCKET or Stream.SendSize == 0 then
-		return nil
+		return 0
 	end
 
 	local Write = ffi.new("int[1]", Stream.Socket)
 	if select_(0, nil, 1, Write, 0, nil, 0) ~= 1 then
-		return nil
+		return 0
 	end
 
 	if not Port or Port == 0 then
@@ -762,24 +801,27 @@ function SendUDPMsg(Stream, IP, Port)
 
 	local Result = sendto_(Stream.Socket, Stream.SendBuffer, Stream.SendSize, 0, IP, Port)
 	if Result == SOCKET_ERROR or Result == 0 then
-		return nil
+		return 0
 	end
 
 	if Result == Stream.SendSize then
 		C.free(Stream.SendBuffer)
 		Stream.SendSize = 0
+		return 1
 	else
 		local NewBuffer = C.malloc(Stream.SendSize - Result)
 		local PrevBuffer = ffi.string(Stream.SendBuffer)
 		ffi.copy(Temp, PrevBuffer:sub(Result + 1), Stream.SendSize - Result)
 		C.free(Stream.SendBuffer)
 		Stream.SendBuffer = NewBuffer
+		return 1
 	end
+	return 0
 end
 
 function UDPMsgIP(Stream)
 	assert(Stream)
-	return Stream.MessageIP
+	return ffi.string(Stream.MessageIP)
 end
 
 function UDPMsgPort(Stream)
@@ -789,12 +831,12 @@ end
 
 function UDPStreamIP(Stream)
 	assert(Stream)
-	return Stream.Socket ~= INVALID_SOCKET and Stream.LocalIP
+	return ffi.string(Stream.LocalIP)
 end
 
 function UDPStreamPort(Stream)
 	assert(Stream)
-	return Stream.Socket ~= INVALID_SOCKET and Stream.LocalPort
+	return Stream.LocalPort
 end
 
 function UDPTimeouts(Recv)
@@ -804,17 +846,13 @@ function UDPTimeouts(Recv)
 	end
 end
 
-local TTCPStream = {
-	Timeouts = {
-		[0] = 10000,
-		[1] = 0
-	},
-	Socket = 0,
-	LocalIP = 0,
-	LocalPort = 0,
-	TCP = true
-}
-TCP = {__index = TTCPStream}
+local TTCPStream = {}
+local TCP = {__index = TTCPStream}
+ffi.metatype("struct TTCPStream", TCP)
+
+function TCP:__gc()
+	self:Close()
+end
 
 function TTCPStream:ReadByte()
 	local n = ffi.new("char[1]")
@@ -1049,13 +1087,11 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 		return nil
 	end
 
-	local IP = inet_ntoa_(SAddress.sin_addr)
-	local Port = ntohs_(SAddress.sin_port)
-	local Stream = setmetatable({
-		Socket = Socket,
-		LocalIP = ffi.string(IP),
-		LocalPort = Port
-	}, TCP)
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = inet_ntoa_(SAddress.sin_addr)
+	Stream.LocalPort = ntohs_(SAddress.sin_port)
+	Stream.TCP = true
 
 	local ServerPtr = ffi.new("int[1]")
 	ServerPtr[0] = ServerIP
@@ -1100,13 +1136,11 @@ function CreateTCPServer(Port)
 		return nil
 	end
 
-	local IP = inet_ntoa_(SAddress.sin_addr)
-	local Port = ntohs_(SAddress.sin_port)
-	local Stream = setmetatable({
-		Socket = Socket,
-		LocalIP = ffi.string(IP),
-		LocalPort = Port
-	}, TCP)
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = inet_ntoa_(SAddress.sin_addr)
+	Stream.LocalPort = ntohs_(SAddress.sin_port)
+	Stream.TCP = true
 
 	if listen_(Socket, BNET_MAX_CLIENTS) == SOCKET_ERROR then
 		shutdown_(Socket, SD_BOTH)
@@ -1132,24 +1166,22 @@ function AcceptTCPStream(Stream)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(Address)
 
-	local Result = accept_(Stream.Socket, Addr, SizePtr)
-	if Result == SOCKET_ERROR then
+	local Socket = accept_(Stream.Socket, Addr, SizePtr)
+	if Socket == SOCKET_ERROR then
 		return nil
 	end
 
-	local IP = inet_ntoa_(Address.sin_addr)
-	local Port = ntohs_(Address.sin_port)
-	local Client = setmetatable({
-		Socket = Result,
-		LocalIP = ffi.string(IP),
-		LocalPort = Port
-	}, TCP)
-	return Client
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = inet_ntoa_(Address.sin_addr)
+	Stream.LocalPort = ntohs_(Address.sin_port)
+	Stream.TCP = true
+	return Stream
 end
 
 function TCPStreamIP(Stream)
 	assert(Stream)
-	return Stream.LocalIP
+	return ffi.string(Stream.LocalIP)
 end
 
 function TCPStreamPort(Stream)
