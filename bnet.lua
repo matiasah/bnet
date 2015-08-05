@@ -2,6 +2,7 @@ local ffi = require("ffi")
 local bit = require("bit")
 local fd_lib
 
+local print = print
 local tostring = tostring
 local tonumber = tonumber
 local strsub = string.sub
@@ -30,7 +31,7 @@ local SOCKET_ERROR = -1
 local SD_BOTH = 2
 
 local FIONREAD
-local sock, netdb, ioctl_
+local sock, ioctl_
 if ffi.os == "Windows" then
 	FIONREAD = 0x4004667F
 
@@ -55,7 +56,7 @@ if ffi.os == "Windows" then
 			bool UDP;
 		};
 		struct TTCPStream {
-			int Timeouts[2];
+			int * Timeouts;
 			SOCKET Socket;
 			char * LocalIP;
 			int LocalPort;
@@ -171,8 +172,7 @@ if ffi.os == "Windows" then
 		return sock.ioctlsocket(s, cmd, argp)
 	end
 else
-	sock = ffi.load("sys/socket.h")
-	netdb = ffi.load("netdb.h")
+	sock = ffi.C
 	ffi.cdef [[
 		typedef uint16_t u_short;
 		typedef uint32_t u_int;
@@ -193,7 +193,7 @@ else
 			bool UDP;
 		};
 		struct TTCPStream {
-			int Timeouts[2];
+			int * Timeouts;
 			SOCKET Socket;
 			char * LocalIP;
 			int LocalPort;
@@ -251,13 +251,47 @@ else
 		struct hostent *gethostbyaddr(const char *addr, int len, int type);
 	]]
 
-	fd_lib = ffi.load("sys/select.h")
-	ffi.cdef [[
-		void FD_CLR(int fd, fd_set *set);
-		void FD_SET(int fd, fd_set *set);
-		void FD_ZERO(fd_set *set);
-		int FD_ISSET(int fd, fd_set *set);
-	]]
+	fd_lib = {
+		FD_CLR = function (fd, set)
+			for i = 0, set.fd_count do
+				if set.fd_array[i] == fd then
+					while i < set.fd_count-1 do
+						set.fd_array[i] = set.fd_array[i + 1]
+						i = i + 1
+					end
+					set.fd_count = set.fd_count - 1
+					break
+				end
+			end
+		end,
+		FD_SET = function (fd, set)
+			local Index = 0
+			for i = 0, set.fd_count do
+				if set.fd_array[i] == fd then
+					Index = i
+					break
+				end
+			end
+
+			if Index == set.fd_count then
+				if set.fd_count < 64 then
+					set.fd_array[Index] = fd
+					set.fd_count = set.fd_count + 1
+				end
+			end
+		end,
+		FD_ZERO = function (set)
+			set.fd_count = 0
+		end,
+		FD_ISSET = function (fd, set)
+			for i = 0, set.fd_count do
+				if set.fd_array[i] == fd then
+					return true
+				end
+			end
+			return false
+		end,
+	}
 
 	function ioctl_(s, cmd, argp)
 		return sock.ioctl(s, cmd, argp)
@@ -265,7 +299,7 @@ else
 
 	if ffi.os == "MacOS" then
 		FIONREAD = 0x4004667F
-	elseif ffi.os == "Linux" then
+	else --if ffi.os == "Linux" then
 		FIONREAD = 0x0000541B
 	end
 end
@@ -463,45 +497,36 @@ function UDP:__gc()
 end
 
 function TUDPStream:ReadByte()
-	local n = ffi.new("char[1]")
-	self:Read(n, 1)
-	return (n[0] + 256) % 256
+	local n = ffi.new("byte[1]"); self:Read(n, 1)
+	return n[0]
 end
 
 function TUDPStream:ReadShort()
-	local n = ffi.new("char[2]")
-	self:Read(n, 2)
-	return (n[0] + 256) % 256 + ((n[1] + 256) % 256) * 256
+	local n = ffi.new("byte[2]"); self:Read(n, 2)
+	return n[0] + n[1] * 256
 end
 
 function TUDPStream:ReadInt()
-	local n = ffi.new("char[4]")
-	self:Read(n, 4)
-	local v = 0
-	for i = 0, 3 do
-		local b = (n[i] + 256) % 256
-		v = v + b * (256 ^ i)
-	end
-	return v
+	local n = ffi.new("byte[4]"); self:Read(n, 4)
+	return n[0] + n[1] * 256 + n[2] * 65536 + n[3] * 16777216
 end
 
 function TUDPStream:ReadLong()
-	local n = ffi.new("char[8]")
-	self:Read(n, 8)
-	local v = 0
+	local n = ffi.new("byte[8]"); self:Read(n, 8)
+	local Value = ffi.new("uint64_t")
+	local LongByte = ffi.new("uint64_t", 256)
 	for i = 0, 7 do
-		local b = (n[i] + 256) % 256
-		v = v + b * (256 ^ i)
+		Value = Value + ffi.new("uint64_t", n[i]) * LongByte ^ i
 	end
-	return v
+	return Value
 end
 
 function TUDPStream:ReadLine()
 	local Buffer = ""
 	local Size = 0
-	while true do
+	while self:Size() > 0 do
 		local Char = self:ReadByte()
-		if self:Size() == 0 or Char == 10 or Char == 0 then
+		if Char == 10 or Char == 0 then
 			break
 		end
 		if Char ~= 13 then
@@ -513,8 +538,7 @@ end
 
 function TUDPStream:ReadString(Length)
 	if Length > 0 then
-		local Buffer = ffi.new("char["..Length.."]")
-		self:Read(Buffer, Length)
+		local Buffer = ffi.new("byte["..Length.."]"); self:Read(Buffer, Length)
 		return ffi.string(Buffer, Length)
 	end
 	return ""
@@ -621,12 +645,19 @@ function TUDPStream:Close()
 	end
 end
 
+function TUDPStream:Timeout(Recv)
+	assert(Recv)
+	if Recv >= 0 then
+		self.Timeout = Recv
+	end
+end
+
 function TUDPStream:SendTo(IP, Port)
 	if self.Socket == INVALID_SOCKET or self.SendSize == 0 then
 		return false
 	end
 
-	local Write = {self.Socket} -- ffi.new("int[1]", Stream.Socket)
+	local Write = {self.Socket}
 	if select_(0, nil, 1, Write, 0, nil, 0) ~= 1 then
 		return false
 	end
@@ -663,7 +694,7 @@ function TUDPStream:RecvFrom()
 		return false
 	end
 
-	local Read = {self.Socket} -- ffi.new("int[1]", self.Socket)
+	local Read = {self.Socket}
 	if select_(1, Read, 0, nil, 0, nil, self.Timeout) ~= 1 then
 		return false
 	end
@@ -760,13 +791,6 @@ function UDPStreamPort(Stream)
 	return Stream.LocalPort
 end
 
-function UDPTimeouts(Recv)
-	assert(Recv)
-	if Recv >= 0 then
-		self.Timeout = Recv
-	end
-end
-
 local TTCPStream = {}
 local TCP = {__index = TTCPStream}
 ffi.metatype("struct TTCPStream", TCP)
@@ -776,45 +800,36 @@ function TCP:__gc()
 end
 
 function TTCPStream:ReadByte()
-	local n = ffi.new("char[1]")
-	self:Read(n, 1)
-	return (n[0] + 256) % 256
+	local n = ffi.new("byte[1]"); self:Read(n, 1)
+	return n[0]
 end
 
 function TTCPStream:ReadShort()
-	local n = ffi.new("char[2]")
-	self:Read(n, 2)
-	return (n[0] + 256) % 256 + ((n[1] + 256) % 256) * 256
+	local n = ffi.new("byte[2]"); self:Read(n, 2)
+	return n[0] + n[1] * 256
 end
 
 function TTCPStream:ReadInt()
-	local n = ffi.new("char[4]")
-	self:Read(n, 4)
-	local v = 0
-	for i = 0, 3 do
-		local b = (n[i] + 256) % 256
-		v = v + b * (256 ^ i)
-	end
-	return v
+	local n = ffi.new("byte[4]"); self:Read(n, 4)
+	return n[0] + n[1] * 256 + n[2] * 65536 + n[3] * 16777216
 end
 
 function TTCPStream:ReadLong()
-	local n = ffi.new("char[8]")
-	self:Read(n, 8)
-	local v = 0
+	local n = ffi.new("byte[8]"); self:Read(n, 8)
+	local Value = ffi.new("uint64_t")
+	local LongByte = ffi.new("uint64_t", 256)
 	for i = 0, 7 do
-		local b = (n[i] + 256) % 256
-		v = v + b * (256 ^ i)
+		Value = Value + ffi.new("uint64_t", n[i]) * LongByte ^ i
 	end
-	return v
+	return Value
 end
 
 function TTCPStream:ReadLine()
 	local Buffer = ""
 	local Size = 0
-	while true do
+	while self:Size() > 0 do
 		local Char = self:ReadByte()
-		if self:Size() == 0 or Char == 10 or Char == 0 then
+		if Char == 10 or Char == 0 then
 			break
 		end
 		if Char ~= 13 then
@@ -826,8 +841,7 @@ end
 
 function TTCPStream:ReadString(Length)
 	if Length > 0 then
-		local Buffer = ffi.new("char["..Length.."]")
-		self:Read(Buffer, Length)
+		local Buffer = ffi.new("byte["..Length.."]"); self:Read(Buffer, Length)
 		return ffi.string(Buffer, Length)
 	end
 	return ""
@@ -881,7 +895,7 @@ function TTCPStream:Connected()
 	if self.Socket == INVALID_SOCKET then
 		return false
 	end
-	local Read = ffi.new("int[1]", self.Socket)
+	local Read = {self.Socket}
 	if select_(1, Read, 0, nil, 0, nil, 0) ~= 1 or ReadAvail(self) ~= 0 then
 		return true
 	end
@@ -889,12 +903,20 @@ function TTCPStream:Connected()
 	return false
 end
 
+function TTCPStream:SetTimeout(Read, Accept)
+	assert(Read)
+	assert(Accept)
+	if Read < 0 then Read = 0 end
+	if Accept < 0 then Accept = 0 end
+	self.Timeouts = ffi.new("int[2]", Read, Accept)
+end
+
 function TTCPStream:Read(Buffer, Size)
 	if self.Socket == INVALID_SOCKET then
 		return 0
 	end
 
-	local Read = ffi.new("int[1]", self.Socket)
+	local Read = {self.Socket}
 	if select_(1, Read, 0, nil, 0, nil, self.Timeouts[0]) ~= 1 then
 		return 0
 	end
@@ -1015,6 +1037,7 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	Stream.Socket = Socket
 	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
 	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
+	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 
 	local ServerPtr = ffi.new("int[1]")
@@ -1064,6 +1087,7 @@ function CreateTCPServer(Port)
 	Stream.Socket = Socket
 	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
 	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
+	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 
 	if sock.listen(Socket, BNET_MAX_CLIENTS) == SOCKET_ERROR then
@@ -1081,7 +1105,7 @@ function AcceptTCPStream(Stream)
 	end
 
 	local Read = ffi.new("int[1]", Stream.Socket)
-	if select_(1, Read, 0, nil, 0, nil, TTCPStream.Timeouts[1]) ~= 1 then
+	if select_(1, Read, 0, nil, 0, nil, Stream.Timeouts[1]) ~= 1 then
 		return nil
 	end
 
@@ -1099,6 +1123,7 @@ function AcceptTCPStream(Stream)
 	Stream.Socket = Socket
 	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
 	Stream.LocalPort = sock.ntohs(Address.sin_port)
+	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 	return Stream
 end
@@ -1111,13 +1136,4 @@ end
 function TCPStreamPort(Stream)
 	assert(Stream)
 	return Stream.LocalPort
-end
-
-function TCPTimeouts(Read, Accept)
-	assert(Read)
-	assert(Accept)
-	if Read < 0 then Read = 0 end
-	if Accept < 0 then Accept = 0 end
-	TTCPStream.Timeouts[0] = Read
-	TTCPStream.Timeouts[1] = Accept
 end
