@@ -569,23 +569,24 @@ end
 
 function TUDPStream:Read(Buffer, Size)
 	local NewBuffer, PrevBuffer
-	if Size > self.RecvSize then
-		Size = self.RecvSize
-	end
+	local Size = math.min(Size, self.RecvSize)
 	if Size > 0 then
-		ffi.copy(Buffer, self.RecvBuffer, Size)
-		if Size < self.RecvSize then
-			local BufferCType = ffi.typeof('$[?]',
+		--ffi.copy(Buffer, self.RecvBuffer, Size)
+		self.RecvBuffer:read(Buffer, 0, 0, Size) -- This would copy 'Size' bytes into the buffer
 
-			NewBuffer = C.malloc(self.RecvSize - Size)
-			PrevBuffer = ffi.string(self.RecvBuffer, self.RecvSize)
-			ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
-			C.free(self.RecvBuffer)
+		if Size < self.RecvSize then
+			NewBuffer = rb.cbuffer{size = self.RecvSize - Size} -- The bytes we read must be removed from the begining of the buffer
+			self.RecvBuffer:read(NewBuffer, Size, 0, self.RecvSize - Size)
+
+			--PrevBuffer = ffi.string(self.RecvBuffer, self.RecvSize)
+			--ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
+			--C.free(self.RecvBuffer)
 
 			self.RecvBuffer = NewBuffer
 			self.RecvSize = self.RecvSize - Size
 		else
-			C.free(self.RecvBuffer)
+			--C.free(self.RecvBuffer)
+			self.RecvBuffer = rb.cbuffer{size = 0}
 			self.RecvSize = 0
 		end
 	end
