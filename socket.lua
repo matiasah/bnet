@@ -1237,26 +1237,31 @@ function TTCPStream:listen(backlog)
 end
 
 function TTCPStream:receive(pattern, prefix)
-	local Datagram = ""
-	if pattern == "*a" then
-		Datagram = self:ReadString(self:Size())
-	elseif pattern == "*l" then
-		while not self:Eof() do
-			local Byte = self:ReadByte()
-			if Byte == 13 then
-				break
+	if self:Connected() or not self:Eof() then
+		local Datagram = ""
+		if pattern == "*a" then
+			Datagram = self:ReadString(self:Size())
+		elseif pattern == "*l" then
+			while not self:Eof() do
+				local Byte = self:ReadByte()
+				if Byte == 13 then
+					break
+				end
+				Datagram = Datagram .. string.char(Byte)
 			end
-			Datagram = Datagram .. string.char(Byte)
+		elseif type(pattern) == "number" then
+			Datagram = self:ReadString(pattern)
 		end
-	elseif type(pattern) == "number" then
-		Datagram = self:ReadString(pattern)
-	end
-	if Datagram then
-		if prefix then
-			return prefix .. Datagram
+		if Datagram then
+			if prefix then
+				return prefix .. Datagram
+			end
+			return Datagram
 		end
-		return Datagram
+	elseif not self:Connected() then
+		return nil, "closed"
 	end
+	return nil, "timeout"
 end
 
 function TTCPStream:send(data, i, j)
@@ -1303,6 +1308,7 @@ function tcp()
 
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.TCP = true
+	return Stream
 end
 
 -- socket.protect(func)
@@ -1323,9 +1329,9 @@ end
 -- socket.skip(d [, ret1, ret2 ... retN])
 function skip(d, ...)
 	local skip = {}
-	for Key, Value in ipairs({...}) do
+	for Key, Value in pairs({...}) do
 		if Key >= d then
-			table.insert(skip, Key)
+			skip[Key - d + 1] = value
 		end
 	end
 	return unpack(skip)
@@ -1368,6 +1374,7 @@ return {
 	_VERSION = "LuaSocket 2.0.2",
 	_DEBUG = false,
 
+	tcp = tcp,
 	protect = protect,
 	skip = skip,
 	sleep = sleep,
