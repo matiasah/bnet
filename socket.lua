@@ -8,7 +8,8 @@ ffi.cdef [[
 local C = ffi.C
 
 module("socket", package.seeall)
-socket.MAX_CLIENTS = 1024
+
+local SOMAXCONN = 128
 
 local INVALID_SOCKET = -1
 local INADDR_ANY = 0
@@ -1027,7 +1028,7 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	return Stream
 end
 
-function CreateTCPServer(Port)
+function CreateTCPServer(Port, Backlog)
 	if not Port then
 		Port = 0
 	end
@@ -1061,7 +1062,7 @@ function CreateTCPServer(Port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 
-	if sock.listen(Socket, MAX_CLIENTS) == SOCKET_ERROR then
+	if sock.listen(Socket, Backlog or SOMAXCONN) == SOCKET_ERROR then
 		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
@@ -1227,7 +1228,7 @@ function TTCPStream:getstats()
 end
 
 function TTCPStream:listen(backlog)
-	if sock.listen(self.Socket, backlog or 0) == SOCKET_ERROR then
+	if sock.listen(self.Socket, backlog or SOMAXCONN) == SOCKET_ERROR then
 		sock.shutdown(self.Socket, SD_BOTH)
 		closesocket_(self.Socket)
 		return false, ""
