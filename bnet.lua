@@ -1,13 +1,9 @@
 local ffi = require("ffi")
 local bit = require("bit")
+local rb = require("ringbuffer2")
 
-ffi.cdef [[
-	void free (void* ptr);
-	void *malloc(size_t size);
-]]
+ffi.cdef [[void free (void* ptr);]]
 local C = ffi.C
-
-module("socket", package.seeall)
 
 local SOMAXCONN = 128
 
@@ -23,6 +19,11 @@ local SOCKET_ERROR = -1
 local SD_RECEIVE = 0
 local SD_SEND = 1
 local SD_BOTH = 2
+
+local socket = {
+	_VERSION = "LuaSocket 2.0.2",
+	_DEBUG = false
+}
 
 ffi.cdef [[
 	struct TUDPStream {
@@ -43,7 +44,10 @@ ffi.cdef [[
 		SOCKET Socket;
 		char * LocalIP;
 		int LocalPort;
+
 		bool TCP;
+		bool IsServer;
+		bool IsClient;
 
 		int Received;
 		int Sent;
@@ -433,12 +437,6 @@ local function recvfrom_(socket, buf, size, flags)
 	return count, sock.inet_ntoa(sa.sin_addr), sock.ntohs(sa.sin_port)
 end
 
-local function Shl(A, B)
-	if A and B then
-		return A * (2 ^ B)
-	end
-end
-
 function CountHostIPs(Host)
 	assert(Host)
 	local Addresses, AdressType, AddressLength = gethostbyname_(Host)
@@ -577,10 +575,13 @@ function TUDPStream:Read(Buffer, Size)
 	if Size > 0 then
 		ffi.copy(Buffer, self.RecvBuffer, Size)
 		if Size < self.RecvSize then
+			local BufferCType = ffi.typeof('$[?]',
+
 			NewBuffer = C.malloc(self.RecvSize - Size)
 			PrevBuffer = ffi.string(self.RecvBuffer, self.RecvSize)
 			ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
 			C.free(self.RecvBuffer)
+
 			self.RecvBuffer = NewBuffer
 			self.RecvSize = self.RecvSize - Size
 		else
@@ -725,7 +726,7 @@ function TUDPStream:GetPort()
 	return tonumber(self.LocalPort)
 end
 
-function CreateUDPStream(Port)
+function socket.CreateUDPStream(Port)
 	if not Port then
 		Port = 0
 	end
@@ -962,7 +963,7 @@ function TTCPStream:GetPort(Stream)
 	return tonumber(self.LocalPort)
 end
 
-function OpenTCPStream(Server, ServerPort, LocalPort)
+function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	assert(Server)
 	assert(ServerPort)
 	if not LocalPort then
@@ -985,7 +986,7 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 		if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
 		if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
 		if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
-		ServerIP = bit.bor(Shl(NAddress[3], 24), Shl(NAddress[2], 16), Shl(NAddress[1], 8), NAddress[0])
+		ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
 	end
 
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
@@ -1016,6 +1017,8 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
+	Stream.IsClient = true
+	Stream.Age = socket.gettime()
 
 	local ServerPtr = ffi.new("int[1]")
 	ServerPtr[0] = ServerIP
@@ -1028,7 +1031,7 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	return Stream
 end
 
-function CreateTCPServer(Port, Backlog)
+function socket.CreateTCPServer(Port, Backlog)
 	if not Port then
 		Port = 0
 	end
@@ -1061,6 +1064,8 @@ function CreateTCPServer(Port, Backlog)
 	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
+	Stream.IsServer = true
+	Stream.Age = socket.gettime()
 
 	if sock.listen(Socket, Backlog or SOMAXCONN) == SOCKET_ERROR then
 		sock.shutdown(Socket, SD_BOTH)
@@ -1171,7 +1176,7 @@ function TTCPStream:connect(address, port)
 		if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
 		if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
 		if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
-		ServerIP = bit.bor(Shl(NAddress[3], 24), Shl(NAddress[2], 16), Shl(NAddress[1], 8), NAddress[0])
+		ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
 	end
 
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
@@ -1202,6 +1207,7 @@ function TTCPStream:connect(address, port)
 	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
+	Stream.IsClient = true
 
 	local ServerPtr = ffi.new("int[1]")
 	ServerPtr[0] = ServerIP
@@ -1223,7 +1229,7 @@ function TTCPStream:getsockname()
 end
 
 function TTCPStream:getstats()
-	local Age = gettime() - tonumber(self.Age)
+	local Age = socket.gettime() - tonumber(self.Age)
 	return tonumber(self.Received), tonumber(self.Sent), Age
 end
 
@@ -1233,6 +1239,7 @@ function TTCPStream:listen(backlog)
 		closesocket_(self.Socket)
 		return false, ""
 	end
+	self.IsServer = true
 	return true
 end
 
@@ -1275,7 +1282,7 @@ end
 function TTCPStream:setstats(received, sent, age)
 	self.Received = received
 	self.Sent = sent
-	self.Age = gettime() - (tonumber(age) or 0)
+	self.Age = socket.gettime() - (tonumber(age) or 0)
 end
 
 function TTCPStream:settimeout(value, mode)
@@ -1300,7 +1307,7 @@ function TTCPStream:shutdown(mode)
 end
 
 -- socket.tcp()
-function tcp()
+function socket.tcp()
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
 		return false, ""
@@ -1312,7 +1319,7 @@ function tcp()
 end
 
 -- socket.protect(func)
-function protect(func)
+function socket.protect(func)
 	return function (...)
 		local Args = {pcall(func, ...)}
 		if Args[1] then
@@ -1326,8 +1333,17 @@ function protect(func)
 	end
 end
 
+-- socket.select(recvt, sendt [, timeout])
+function socket.select(recvt, sendt, timeout)
+	if type(recvt) == "table" then
+		for _, Stream in pairs(recvt) do
+
+		end
+	end
+end
+
 -- socket.skip(d [, ret1, ret2 ... retN])
-function skip(d, ...)
+function socket.skip(d, ...)
 	local skip = {}
 	for Key, Value in pairs({...}) do
 		if Key >= d then
@@ -1340,12 +1356,12 @@ end
 -- socket.sleep(time)
 if ffi.os == "Windows" then
 	ffi.cdef [[void sleep(int ms);]]
-	function sleep(t)
+	function socket.sleep(t)
 		C.sleep(t * 1000)
 	end
 else
 	ffi.cdef [[int poll(struct pollfd * fds, unsigned long nfds, int timeout);]]
-	function sleep(t)
+	function socket.sleep(t)
 		C.poll(nil, 0, s * 1000)
 	end
 end
@@ -1362,28 +1378,11 @@ ffi.cdef [[
 	};
 	int gettimeofday(struct timeval * tv, struct timezone * tz);
 ]]
-local _Start = ffi.new("struct timeval")
-C.gettimeofday(_Start, nil)
-function gettime()
+local _Start = ffi.new("struct timeval"); C.gettimeofday(_Start, nil)
+function socket.gettime()
 	local Time = ffi.new("struct timeval")
 	C.gettimeofday(Time, nil)
 	return (Time.tv_sec + Time.tv_usec/1.0e6) - Start
 end
 
-return {
-	_VERSION = "LuaSocket 2.0.2",
-	_DEBUG = false,
-
-	tcp = tcp,
-	protect = protect,
-	skip = skip,
-	sleep = sleep,
-	gettime = gettime,
-
-	CountHostIPs = CountHostIPs,
-	IntIP = IntIP,
-	StringIP = StringIP,
-	CreateUDPStream = CreateUDPStream,
-	OpenTCPStream = OpenTCPStream,
-	CreateTCPServer = CreateTCPServer,
-}
+return socket

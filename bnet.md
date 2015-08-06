@@ -1,5 +1,14 @@
-# LuaJIT BNet FFI-Binding
-LuaJIT's FFI port for Eiksoft's BNet networking module.
+---
+project: bnet
+tagline: dev, FFI networking library, API compatible with LuaSocket 2.0.2
+platforms: ming, linux, osx
+---
 
-**Tested on**
-Windows 8 Pro x64
+## `local socket = require'socket'`
+
+## API
+
+------------------------- ----------------------------------------------------
+------------------------- ----------------------------------------------------
+
+## Notes
