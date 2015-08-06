@@ -1,14 +1,5 @@
 local ffi = require("ffi")
 local bit = require("bit")
-local fd_lib
-
-local print = print
-local tostring = tostring
-local tonumber = tonumber
-local strsub = string.sub
-local setmetatable = setmetatable
-local assert = assert
-local char = string.char
 
 ffi.cdef [[
 	void free (void* ptr);
@@ -16,8 +7,8 @@ ffi.cdef [[
 ]]
 local C = ffi.C
 
-module("bnet")
-BNET_MAX_CLIENTS = 1024
+module("socket", package.seeall)
+socket.MAX_CLIENTS = 1024
 
 local INVALID_SOCKET = -1
 local INADDR_ANY = 0
@@ -28,10 +19,39 @@ local SOCK_STREAM = 1
 local SOCK_DGRAM = 2
 local SOCKET_ERROR = -1
 
+local SD_RECEIVE = 0
+local SD_SEND = 1
 local SD_BOTH = 2
 
+ffi.cdef [[
+	struct TUDPStream {
+		int Timeout;
+		SOCKET Socket;
+		char * LocalIP;
+		int LocalPort;
+		char * MessageIP;
+		int MessagePort;
+		int RecvSize;
+		int SendSize;
+		void * RecvBuffer;
+		void * SendBuffer;
+		bool UDP;
+	};
+	struct TTCPStream {
+		int * Timeouts;
+		SOCKET Socket;
+		char * LocalIP;
+		int LocalPort;
+		bool TCP;
+
+		int Received;
+		int Sent;
+		int Age;
+	};
+]]
+
 local FIONREAD
-local sock, ioctl_
+local sock, ioctl_, fd_lib
 if ffi.os == "Windows" then
 	FIONREAD = 0x4004667F
 
@@ -42,26 +62,6 @@ if ffi.os == "Windows" then
 		typedef unsigned long u_long;
 		typedef uintptr_t SOCKET;
 		typedef unsigned char byte;
-		struct TUDPStream {
-			int Timeout;
-			SOCKET Socket;
-			char * LocalIP;
-			int LocalPort;
-			char * MessageIP;
-			int MessagePort;
-			int RecvSize;
-			int SendSize;
-			void * RecvBuffer;
-			void * SendBuffer;
-			bool UDP;
-		};
-		struct TTCPStream {
-			int * Timeouts;
-			SOCKET Socket;
-			char * LocalIP;
-			int LocalPort;
-			bool TCP;
-		};
 		struct sockaddr {
 			unsigned short sa_family;
 			char sa_data[14];
@@ -179,26 +179,6 @@ else
 		typedef unsigned long u_long;
 		typedef uintptr_t SOCKET;
 		typedef unsigned char byte;
-		struct TUDPStream {
-			int Timeout;
-			SOCKET Socket;
-			char * LocalIP;
-			int LocalPort;
-			char * MessageIP;
-			int MessagePort;
-			int RecvSize;
-			int SendSize;
-			void * RecvBuffer;
-			void * SendBuffer;
-			bool UDP;
-		};
-		struct TTCPStream {
-			int * Timeouts;
-			SOCKET Socket;
-			char * LocalIP;
-			int LocalPort;
-			bool TCP;
-		};
 		struct sockaddr {
 			unsigned short sa_family;
 			char sa_data[14];
@@ -728,6 +708,22 @@ function TUDPStream:RecvFrom()
 	return MessageIP, MessagePort
 end
 
+function TUDPStream:MsgIP()
+	return ffi.string(self.MessageIP)
+end
+
+function TUDPStream:MsgPort()
+	return tonumber(self.messagePort)
+end
+
+function TUDPStream:GetIP()
+	return ffi.string(self.LocalIP)
+end
+
+function TUDPStream:GetPort()
+	return tonumber(self.LocalPort)
+end
+
 function CreateUDPStream(Port)
 	if not Port then
 		Port = 0
@@ -764,31 +760,6 @@ function CreateUDPStream(Port)
 	Stream.SendBuffer = nil
 	Stream.RecvBuffer = nil
 	return Stream
-end
-
-function CloseUDPStream(Stream)
-	assert(Stream)
-	return Stream:Close()
-end
-
-function UDPMsgIP(Stream)
-	assert(Stream)
-	return ffi.string(Stream.MessageIP)
-end
-
-function UDPMsgPort(Stream)
-	assert(Stream)
-	return Stream.MessagePort
-end
-
-function UDPStreamIP(Stream)
-	assert(Stream)
-	return ffi.string(Stream.LocalIP)
-end
-
-function UDPStreamPort(Stream)
-	assert(Stream)
-	return Stream.LocalPort
 end
 
 local TTCPStream = {}
@@ -925,6 +896,7 @@ function TTCPStream:Read(Buffer, Size)
 	if Result == SOCKET_ERROR then
 		return 0
 	end
+	self.Received = self.Received + Size
 	return Result
 end
 
@@ -942,6 +914,7 @@ function TTCPStream:Write(Buffer, Size)
 	if Result == SOCKET_ERROR then
 		return 0
 	end
+	self.Sent = self.Sent + Size
 	return Result
 end
 
@@ -980,9 +953,12 @@ function TTCPStream:Close()
 	end
 end
 
-function TCPStreamConnected(Stream)
-	assert(Stream)
-	return Stream:Connected()
+function TTCPStream:GetIP(Stream)
+	return ffi.string(self.LocalIP)
+end
+
+function TTCPStream:GetPort(Stream)
+	return tonumber(self.LocalPort)
 end
 
 function OpenTCPStream(Server, ServerPort, LocalPort)
@@ -1051,11 +1027,6 @@ function OpenTCPStream(Server, ServerPort, LocalPort)
 	return Stream
 end
 
-function CloseTCPStream(Stream)
-	assert(Stream)
-	return Stream:Close()
-end
-
 function CreateTCPServer(Port)
 	if not Port then
 		Port = 0
@@ -1090,7 +1061,7 @@ function CreateTCPServer(Port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 
-	if sock.listen(Socket, BNET_MAX_CLIENTS) == SOCKET_ERROR then
+	if sock.listen(Socket, MAX_CLIENTS) == SOCKET_ERROR then
 		sock.shutdown(Socket, SD_BOTH)
 		closesocket_(Socket)
 		return nil
@@ -1098,14 +1069,13 @@ function CreateTCPServer(Port)
 	return Stream
 end
 
-function AcceptTCPStream(Stream)
-	assert(Stream)
-	if Stream.Socket == INVALID_SOCKET then
+function TTCPStream:Accept()
+	if self.Socket == INVALID_SOCKET then
 		return nil
 	end
 
-	local Read = ffi.new("int[1]", Stream.Socket)
-	if select_(1, Read, 0, nil, 0, nil, Stream.Timeouts[1]) ~= 1 then
+	local Read = ffi.new("int[1]", self.Socket)
+	if select_(1, Read, 0, nil, 0, nil, self.Timeouts[1]) ~= 1 then
 		return nil
 	end
 
@@ -1114,7 +1084,7 @@ function AcceptTCPStream(Stream)
 	local SizePtr = ffi.new("int[1]")
 	SizePtr[0] = ffi.sizeof(Address)
 
-	local Socket = sock.accept(Stream.Socket, Addr, SizePtr)
+	local Socket = sock.accept(self.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
 		return nil
 	end
@@ -1128,12 +1098,284 @@ function AcceptTCPStream(Stream)
 	return Stream
 end
 
-function TCPStreamIP(Stream)
-	assert(Stream)
-	return ffi.string(Stream.LocalIP)
+---------- LuaSocket-like api
+
+function TTCPStream:accept()
+	if self.Socket == INVALID_SOCKET then
+		return nil
+	end
+
+	local Read = ffi.new("int[1]", self.Socket)
+	if select_(1, Read, 0, nil, 0, nil, self.Timeouts[1]) ~= 1 then
+		return nil
+	end
+
+	local Address = ffi.new("struct sockaddr_in")
+	local Addr = ffi.cast("struct sockaddr *", Address)
+	local SizePtr = ffi.new("int[1]")
+	SizePtr[0] = ffi.sizeof(Address)
+
+	local Socket = sock.accept(self.Socket, Addr, SizePtr)
+	if Socket == SOCKET_ERROR then
+		return nil
+	end
+
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
+	Stream.LocalPort = sock.ntohs(Address.sin_port)
+	Stream.Timeouts = ffi.new("int[2]")
+	Stream.TCP = true
+	return Stream
 end
 
-function TCPStreamPort(Stream)
-	assert(Stream)
-	return Stream.LocalPort
+function TTCPStream:bind(Address, Port)
+	if Address == "*" then
+		if bind_(self.Socket, AF_INET, Port) == SOCKET_ERROR then
+			sock.shutdown(self.Socket, SD_BOTH)
+			closesocket_(self.Socket)
+			return false, ""
+		end
+
+		local SAddress = ffi.new("struct sockaddr_in")
+		local Addr = ffi.cast("struct sockaddr * ", SAddress)
+		local SizePtr = ffi.new("int[1]")
+		SizePtr[0] = ffi.sizeof(SAddress)
+
+		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
+			sock.shutdown(self.Socket, SD_BOTH)
+			closesocket_(self.Socket)
+			return false, ""
+		end
+		self.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
+		self.LocalPort = sock.ntohs(SAddress.sin_port)
+		self.Timeouts = ffi.new("int[2]")
+		return true
+	end
 end
+
+function TTCPStream:connect(address, port)
+	local AddressIP = sock.inet_addr(address)
+	local PAddress
+	if ServerIP == INADDR_NONE then
+		local Addresses, AddressType, AddressLength = gethostbyname_(address)
+		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
+			return nil
+		elseif Addresses[0] == nil then
+			return nil
+		end
+		PAddress = Addresses[0]
+		local NAddress = {[0] = PAddress[0], PAddress[1], PAddress[2], PAddress[3]}
+		if PAddress[0] < 0 then NAddress[0] = PAddress[0] + 256 end
+		if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
+		if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
+		if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
+		ServerIP = bit.bor(Shl(NAddress[3], 24), Shl(NAddress[2], 16), Shl(NAddress[1], 8), NAddress[0])
+	end
+
+	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
+	if Socket == INVALID_SOCKET then
+		return nil
+	end
+
+	if bind_(Socket, AF_INET, LocalPort) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
+		closesocket_(Socket)
+		return nil
+	end
+
+	local SAddress = ffi.new("struct sockaddr_in")
+	local Addr = ffi.cast("struct sockaddr *", SAddress)
+	local SizePtr = ffi.new("int[1]")
+	SizePtr[0] = ffi.sizeof(SAddress)
+
+	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
+		closesocket_(Socket)
+		return nil
+	end
+
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
+	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
+	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
+	Stream.Timeouts = ffi.new("int[2]")
+	Stream.TCP = true
+
+	local ServerPtr = ffi.new("int[1]")
+	ServerPtr[0] = ServerIP
+
+	if connect_(Socket, ServerPtr, AF_INET, 4, ServerPort) == SOCKET_ERROR then
+		sock.shutdown(Socket, SD_BOTH)
+		closesocket_(Socket)
+		return nil
+	end
+	return Stream
+end
+
+function TTCPStream:getpeername()
+	return ffi.string(self.LocalIP), tonumber(self.Port)
+end
+
+function TTCPStream:getsockname()
+	return ffi.string(self.LocalIP), tonumber(self.Port)
+end
+
+function TTCPStream:getstats()
+	local Age = gettime() - tonumber(self.Age)
+	return tonumber(self.Received), tonumber(self.Sent), Age
+end
+
+function TTCPStream:listen(backlog)
+	if sock.listen(self.Socket, backlog or 0) == SOCKET_ERROR then
+		sock.shutdown(self.Socket, SD_BOTH)
+		closesocket_(self.Socket)
+		return false, ""
+	end
+	return true
+end
+
+function TTCPStream:receive(pattern, prefix)
+	local Datagram = ""
+	if pattern == "*a" then
+		Datagram = self:ReadString(self:Size())
+	elseif pattern == "*l" then
+		while not self:Eof() do
+			local Byte = self:ReadByte()
+			if Byte == 13 then
+				break
+			end
+			Datagram = Datagram .. string.char(Byte)
+		end
+	elseif type(pattern) == "number" then
+		Datagram = self:ReadString(pattern)
+	end
+	if Datagram then
+		if prefix then
+			return prefix .. Datagram
+		end
+		return Datagram
+	end
+end
+
+function TTCPStream:send(data, i, j)
+	if i and j then
+		self:WriteString(data:sub(i, j))
+	else
+		self:WriteString(data)
+	end
+end
+
+function TTCPStream:setstats(received, sent, age)
+	self.Received = received
+	self.Sent = sent
+	self.Age = gettime() - (tonumber(age) or 0)
+end
+
+function TTCPStream:settimeout(value, mode)
+	if not mode then
+		self.Timeouts[0] = value
+		self.Timeouts[1] = value
+	elseif mode == "b" then
+		self.Timeouts[0] = value
+	elseif mode == "t" then
+		self.Timeouts[1] = value
+	end
+end
+
+function TTCPStream:shutdown(mode)
+	if mode == "both" then
+		sock.shutdown(self.Socket, SD_BOTH)
+	elseif mode == "send" then
+		sock.shutdown(self.Socket, SD_SEND)
+	elseif mode == "receive" then
+		sock.shutdown(self.Socket, SD_RECEIVE)
+	end
+end
+
+-- socket.tcp()
+function tcp()
+	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
+	if Socket == INVALID_SOCKET then
+		return false, ""
+	end
+
+	local Stream = ffi.new("struct TTCPStream")
+	Stream.TCP = true
+end
+
+-- socket.protect(func)
+function protect(func)
+	return function (...)
+		local Args = {pcall(func, ...)}
+		if Args[1] then
+			local Args2 = {}
+			Args[1] = nil
+			for k, v in pairs(Args) do
+				Args2[k - 1] = v
+			end
+			return unpack(Args2)
+		end
+	end
+end
+
+-- socket.skip(d [, ret1, ret2 ... retN])
+function skip(d, ...)
+	local skip = {}
+	for Key, Value in ipairs({...}) do
+		if Key >= d then
+			table.insert(skip, Key)
+		end
+	end
+	return unpack(skip)
+end
+
+-- socket.sleep(time)
+if ffi.os == "Windows" then
+	ffi.cdef [[void sleep(int ms);]]
+	function sleep(t)
+		C.sleep(t * 1000)
+	end
+else
+	ffi.cdef [[int poll(struct pollfd * fds, unsigned long nfds, int timeout);]]
+	function sleep(t)
+		C.poll(nil, 0, s * 1000)
+	end
+end
+
+-- socket.gettime()
+ffi.cdef [[
+	struct timeval {
+		long tv_sec;
+		long tv_usec;
+	};
+	struct timezone {
+		int tz_minuteswest;
+		int_tz_dsttime;
+	};
+	int gettimeofday(struct timeval * tv, struct timezone * tz);
+]]
+local _Start = ffi.new("struct timeval")
+C.gettimeofday(_Start, nil)
+function gettime()
+	local Time = ffi.new("struct timeval")
+	C.gettimeofday(Time, nil)
+	return (Time.tv_sec + Time.tv_usec/1.0e6) - Start
+end
+
+return {
+	_VERSION = "LuaSocket 2.0.2",
+	_DEBUG = false,
+
+	protect = protect,
+	skip = skip,
+	sleep = sleep,
+	gettime = gettime,
+
+	CountHostIPs = CountHostIPs,
+	IntIP = IntIP,
+	StringIP = StringIP,
+	CreateUDPStream = CreateUDPStream,
+	OpenTCPStream = OpenTCPStream,
+	CreateTCPServer = CreateTCPServer,
+}
