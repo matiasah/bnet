@@ -1,8 +1,10 @@
 local ffi = require("ffi")
 local bit = require("bit")
-local rb = require("ringbuffer2")
 
-ffi.cdef [[void free (void* ptr);]]
+ffi.cdef [[
+	void free (void* ptr);
+	void *malloc(size_t size);
+]]
 local C = ffi.C
 
 local SOMAXCONN = 128
@@ -772,25 +774,19 @@ function TUDPStream:WriteString(String)
 end
 
 function TUDPStream:Read(Buffer, Size)
-	local NewBuffer --, PrevBuffer
-	local Size = math.min(Size, self.RecvSize)
+	local NewBuffer
+	local Size = math.min(Size, self.RecvBuffer.size)
 	if Size > 0 then
-		--ffi.copy(Buffer, self.RecvBuffer, Size)
-		self.RecvBuffer:read(Buffer, 0, 0, Size) -- This would copy 'Size' bytes into the buffer
-
+		ffi.copy(Buffer, self.RecvBuffer, Size)
 		if Size < self.RecvSize then
-			NewBuffer = rb.cbuffer{size = self.RecvSize - Size} -- The bytes we read must be removed from the begining of the buffer
-			self.RecvBuffer:read(NewBuffer, Size + 1, 0, self.RecvSize - Size)
-
-			--PrevBuffer = ffi.string(self.RecvBuffer, self.RecvSize)
-			--ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
-			--C.free(self.RecvBuffer)
-
+			NewBuffer = C.malloc(self.RecvSize - Size)
+			PrevBuffer = ffi.string(self.RecvBuffer)
+			ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
+			C.free(self.RecvBuffer)
 			self.RecvBuffer = NewBuffer
 			self.RecvSize = self.RecvSize - Size
 		else
-			--C.free(self.RecvBuffer)
-			self.RecvBuffer = rb.cbuffer{size = 0}
+			C.free(self.RecvBuffer)
 			self.RecvSize = 0
 		end
 	end
