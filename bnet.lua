@@ -119,7 +119,7 @@ if ffi.os == "Windows" then
 		int closesocket(SOCKET s);
 		int connect(SOCKET s, const struct sockaddr *name, int namelen);
 		int getsockname(SOCKET s, struct sockaddr *addr, int *namelen);
-		int ioctlsocket(SOCKET s, long cmd, u_long *argp);
+		int ioctlsocket(SOCKET s, long cmd, u_long * argp);
 		int listen(SOCKET s, int backlog);
 		int recv(SOCKET s, char *buf, int len, int flags);
 		int recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen);
@@ -1091,18 +1091,6 @@ function TTCPStream:WriteString(String)
 	return self:Write(String, #String)
 end
 
-function TTCPStream:Connected()
-	if self.Socket == INVALID_SOCKET then
-		return false
-	end
-	local Read = {self.Socket}
-	if select_(1, Read, 0, nil, 0, nil, 0) ~= 1 or ReadAvail(self) ~= 0 then
-		return true
-	end
-	self:Close()
-	return false
-end
-
 function TTCPStream:SetTimeout(Read, Accept)
 	assert(Read)
 	assert(Accept)
@@ -1150,28 +1138,20 @@ end
 function TTCPStream:Size()
 	local Size = ffi.new("int[1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-		return 0
+		return nil, socket_strerror(ffi.errno())
 	end
 	return Size[0]
 end
 
-function TTCPStream:Eof()
+function TTCPStream:Connected()
 	if self.Socket == INVALID_SOCKET then
-		return true
-	end
-
-	local Read = ffi.new("int[1]", self.Socket)
-	local Result = select_(1, Read, 0, nil, 0, nil, self.Timeouts[0])
-	if Result == SOCKET_ERROR then
-		self:Close()
-		return true
-	elseif Result == 1 then
-		if self:Size() == 0 then
-			return true
-		end
 		return false
 	end
-	return true
+	return select_(1, {self.Socket}, 0, nil, 0, nil, 0) == 0
+end
+
+function TTCPStream:Eof()
+	return self:Size() == 0
 end
 
 function TTCPStream:Close()
@@ -1373,7 +1353,7 @@ function TTCPStream:Accept()
 		if Select == SOCKET_ERROR then
 			return nil, socket_strerror(ffi.errno())
 		end
-		return nil, ""
+		return nil, "timeout"
 	end
 
 	local Address = ffi.new("struct sockaddr_in")
@@ -1408,7 +1388,7 @@ function TTCPStream:accept()
 		if Select == SOCKET_ERROR then
 			return nil, socket_strerror(ffi.errno())
 		end
-		return nil, ""
+		return nil, "timeout"
 	end
 
 	local Address = ffi.new("struct sockaddr_in")
@@ -1605,81 +1585,50 @@ function TTCPStream:receive(pattern, prefix)
 
 	local prefix = prefix or ""
 	if pattern == nil or pattern == "*a" then
-		local Size = ffi.new("int[1]")
-		if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
+		local Buffer = ffi.new("byte[4096]")
+		local Result = sock.recv(self.Socket, Buffer, 4096, 0)
+		if Result == SOCKET_ERROR then
 			return nil, socket_strerror(ffi.errno())
 		end
 
-		if Size[0] > 0 then
-			local Select = select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeouts[0])
-			if Select ~= 1 then
-				if Select == SOCKET_ERROR then
-					return nil, socket_strerror(ffi.errno())
-				end
-				return nil, "timeout"
-			end
-
-			local Buffer = ffi.new("byte["..Size[0].."]")
-			local Result = sock.recv(self.Socket, Buffer, Size[0], 0)
-			if Result == SOCKET_ERROR then
-				return nil, socket_strerror(ffi.errno())
-			end
-			return ffi.string(Buffer)
-		end
+		self.Received = self.Received + ffi.sizeof(Buffer)
+		return prefix .. ffi.string(Buffer)
 	elseif pattern == "*l" then
 		local Line = ""
 		repeat
-			local Select = select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeouts[0])
-			if Select ~= 1 then
-				if Select == SOCKET_ERROR then
-					return nil, socket_strerror(ffi.errno())
-				end
-				return nil, "timeout"
-			end
-
 			local Buffer = ffi.new("byte[1]")
 			local Result = sock.recv(self.Socket, Buffer, 1, 0)
 			if Result == SOCKET_ERROR then
 				return nil, socket_strerror(ffi.errno())
 			end
 
-			Line = Line .. string.char(Buffer[0])
 			self.Received = self.Received + 1
+			local Byte = Buffer[0]
+			if Byte == 13 then
+				break
+			elseif Byte ~= 10 then
+				Line = Line .. string.char(Byte)
+			end
 		until self:Eof()
 		return prefix .. Line
 	elseif type(pattern) == "number" then
-		local Size = ffi.new("int[1]")
-		if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
-		end
-
-		local ReadSize = math.min(pattern, Size[0])
-		if Size[0] > 0 then
-			local Select = select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeouts[0])
-			if Select ~= 1 then
-				if Select == SOCKET_ERROR then
-					return nil, socket_strerror(ffi.errno())
-				end
-				return nil, "timeout"
-			end
-
-			local Buffer = ffi.new("byte["..Size[0].."]")
-			local Result = sock.recv(self.Socket, Buffer, ReadSize, 0)
+		local Size = tonumber(pattern)
+		if Size > 0 then
+			local Buffer = ffi.new("byte["..Size.."]")
+			local Result = sock.recv(self.Socket, Buffer, Size, 0)
 			if Result == SOCKET_ERROR then
 				return nil, socket_strerror(ffi.errno())
 			end
-			return ffi.string(Buffer)
+			self.Received = self.Received + ffi.sizeof(Buffer)
+			return prefix .. ffi.string(Buffer)
 		end
+		return prefix
 	end
 
-	local Select = select_(1, {self.Socket}, 0, nil, 0, nil, 0)
-	if Select ~= 1 then
-		if Select == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
-		end
-		return nil, "timeout"
+	if not self:Connected() then
+		return nil, "closed"
 	end
-	return nil, "closed"
+	return nil, "timeout"
 end
 
 function TTCPStream:send(data, i, j)
@@ -1735,6 +1684,8 @@ function TTCPStream:shutdown(mode)
 		sock.shutdown(self.Socket, SD_RECEIVE)
 	end
 end
+
+-- socket.connect(address, port)
 
 -- socket.tcp()
 function socket.tcp()
