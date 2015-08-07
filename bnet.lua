@@ -3,7 +3,6 @@ local bit = require("bit")
 
 ffi.cdef [[
 	void free (void* ptr);
-	void *malloc(size_t size);
 ]]
 local C = ffi.C
 
@@ -773,19 +772,14 @@ function TUDPStream:WriteString(String)
 end
 
 function TUDPStream:Read(Buffer, Size)
-	local NewBuffer
-	local Size = math.min(Size, self.RecvBuffer.size)
+	local Size = math.min(Size, self.RecvSize)
 	if Size > 0 then
 		ffi.copy(Buffer, self.RecvBuffer, Size)
 		if Size < self.RecvSize then
-			NewBuffer = C.malloc(self.RecvSize - Size)
-			PrevBuffer = ffi.string(self.RecvBuffer)
-			ffi.copy(NewBuffer, PrevBuffer:sub(Size + 1), self.RecvSize - Size)
-			C.free(self.RecvBuffer)
-			self.RecvBuffer = NewBuffer
+			self.RecvBuffer = self.RecvBuffer + Size
 			self.RecvSize = self.RecvSize - Size
 		else
-			C.free(self.RecvBuffer)
+			self.RecvBuffer = ffi.new("char [0]")
 			self.RecvSize = 0
 		end
 	end
@@ -793,15 +787,14 @@ function TUDPStream:Read(Buffer, Size)
 end
 
 function TUDPStream:Write(Buffer, Size)
-	local Buffer = ffi.string(Buffer, Size)
-	local NewBuffer = C.malloc(self.SendSize + Size)
+	local NewBuffer = ffi.new("char ["..self.SendSize + Size.."]")
 	if self.SendSize > 0 then
-		ffi.copy(NewBuffer, ffi.string(self.SendBuffer, self.SendSize) .. Buffer)
-		C.free(self.SendBuffer)
+		ffi.copy(NewBuffer, self.SendBuffer, self.SendSize)
+		ffi.copy(NewBuffer + self.SendSize, Buffer, Size)
 		self.SendBuffer = NewBuffer
 		self.SendSize = self.SendSize + Size
 	else
-		ffi.copy(NewBuffer, Buffer)
+		ffi.copy(NewBuffer, Buffer, Size)
 		self.SendBuffer = NewBuffer
 		self.SendSize = Size
 	end
@@ -864,18 +857,16 @@ function TUDPStream:SendTo(IP, Port)
 	end
 
 	if Result == self.SendSize then
-		C.free(self.SendBuffer)
+		self.SendBuffer = ffi.new("char [0]")
 		self.SendSize = 0
 		return true
-	else
-		local NewBuffer = C.malloc(self.SendSize - Result)
-		local PrevBuffer = ffi.string(self.SendBuffer, self.SendSize)
-		ffi.copy(NewBuffer, PrevBuffer:sub(Result + 1), self.SendSize - Result)
-		C.free(self.SendBuffer)
-		self.SendBuffer = NewBuffer
-		return true
 	end
-	return false
+
+	local NewBuffer = ffi.new("char ["..self.SendSize - Result.."]")
+	ffi.copy(NewBuffer, self.SendBuffer + Result, self.SendSize - Result)
+	self.SendBuffer = NewBuffer
+	self.SendSize = self.SendSize - Result
+	return true
 end
 
 function TUDPStream:RecvFrom()
@@ -899,12 +890,11 @@ function TUDPStream:RecvFrom()
 	end
 
 	if self.RecvSize > 0 then
-		local NewBuffer = C.malloc(self.RecvSize + Size)
+		local NewBuffer = ffi.new("char ["..self.RecvSize + Size.."]")
 		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
-		C.free(self.RecvBuffer)
 		self.RecvBuffer = NewBuffer
 	else
-		self.RecvBuffer = C.malloc(Size)
+		self.RecvBuffer = ffi.new("char ["..Size.."]")
 	end
 
 	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer, Size, 0)
