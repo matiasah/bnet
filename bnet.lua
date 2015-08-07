@@ -33,10 +33,10 @@ ffi.cdef [[
 		SOCKET Socket;
 
 		char * LocalIP;
-		int LocalPort;
+		unsigned short LocalPort;
 
 		char * MessageIP;
-		int MessagePort;
+		unsigned short MessagePort;
 
 		int RecvSize;
 		int SendSize;
@@ -49,10 +49,10 @@ ffi.cdef [[
 		SOCKET Socket;
 
 		char * RemoteIP;
-		int RemotePort;
+		unsigned short RemotePort;
 
 		char * LocalIP;
-		int LocalPort;
+		unsigned short LocalPort;
 
 		bool TCP;
 		int Received;
@@ -937,9 +937,7 @@ function TUDPStream:GetPort()
 end
 
 function socket.CreateUDPStream(Port)
-	if not Port then
-		Port = 0
-	end
+	local Port = Port or 0
 	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
 	if Socket == INVALID_SOCKET then
 		return nil
@@ -982,15 +980,17 @@ function socket.CreateUDPStream(Port)
 		return nil, socket_strerror(GetSockNameError)
 	end
 
+	local LocalIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+	local LocalPort = tonumber(sock.ntohs(Address.sin_port))
+
 	local Stream = ffi.new("struct TUDPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
-	Stream.LocalPort = sock.ntohs(Address.sin_port)
+	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
 	Stream.UDP = true
 
-	-- Somehow those buffers start up with 4 bytes in their memory so I decided I should clean their memory, otherwise they'd be sending needless extra memory which spawns from nowhere
-	Stream.SendBuffer = nil
-	Stream.RecvBuffer = nil
+	Stream.SendBuffer = ffi.new("char [0]")
+	Stream.RecvBuffer = ffi.new("char [0]")
 	return Stream
 end
 
@@ -1165,11 +1165,11 @@ function TTCPStream:Close()
 	end
 end
 
-function TTCPStream:GetIP(Stream)
+function TTCPStream:GetIP()
 	return ffi.string(self.LocalIP)
 end
 
-function TTCPStream:GetPort(Stream)
+function TTCPStream:GetPort()
 	return tonumber(self.LocalPort)
 end
 
@@ -1233,17 +1233,15 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 		return nil, socket_strerror(GetSockNameError)
 	end
 
+	local LocalIP = ffi.string(sock.inet_ntoa(SAddress.sin_addr))
+	local LocalPort = tonumber(sock.ntohs(SAddress.sin_port))
+
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
-	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
-	Stream.Timeouts = ffi.new("int[2]")
-	Stream.TCP = true
-	Stream.Age = socket.gettime()
+	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
 
-	local ServerPtr = ffi.new("int[1]")
-	ServerPtr[0] = ServerIP
-
+	local ServerPtr = ffi.new("int[1]", ServerIP)
 	if connect_(Socket, ServerPtr, AF_INET, 4, ServerPort) == SOCKET_ERROR then
 		local ConnectError = ffi.errno()
 
@@ -1260,10 +1258,9 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 		return nil, socket_strerror(ConnectError)
 	end
 
-	local RAddress = ffi.new("struct sockaddr_in")
-	local Addr = ffi.cast("struct sockaddr *", RAddress)
-	local SizePtr = ffi.new("int[1]")
-	SizePtr[0] = ffi.sizeof(RAddress)
+	local RemoteAddress = ffi.new("struct sockaddr_in")
+	local Addr = ffi.cast("struct sockaddr *", RemoteAddress)
+	local SizePtr = ffi.new("int[1]", ffi.sizeof(RemoteAddress))
 
 	if sock.getpeername(Socket, Addr, SizePtr) == SOCKET_ERROR then
 		local GetPeerNameError = ffi.errno()
@@ -1281,8 +1278,15 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 		return nil, socket_strerror(GetPeerNameError)
 	end
 
-	Stream.RemoteIP = sock.inet_ntoa(RAddress.sin_addr)
-	Stream.RemotePort = sock.ntohs(RAddress.sin_port)
+	local RemoteIP = ffi.string(sock.inet_ntoa(RemoteAddress.sin_addr))
+	local RemotePort = tonumber(sock.ntohs(RemoteAddress.sin_port))
+
+	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
+	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
+
+	Stream.Age = socket.gettime()
+	Stream.Timeouts = ffi.new("int[2]")
+	Stream.TCP = true
 
 	return Stream
 end
@@ -1331,13 +1335,13 @@ function socket.CreateTCPServer(Port, Backlog)
 		return nil, socket_strerror(GetSockNameError)
 	end
 
+	local LocalIP = ffi.string(sock.inet_ntoa(SAddress.sin_addr))
+	local LocalPort = tonumber(sock.ntohs(SAddress.sin_port))
+
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
-	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
-	Stream.Timeouts = ffi.new("int[2]")
-	Stream.TCP = true
-	Stream.Age = socket.gettime()
+	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
 
 	if sock.listen(Socket, Backlog or SOMAXCONN) == SOCKET_ERROR then
 		local ListenError = ffi.errno()
@@ -1354,6 +1358,11 @@ function socket.CreateTCPServer(Port, Backlog)
 
 		return nil, socket_strerror(ListenError)
 	end
+
+	Stream.Age = socket.gettime()
+	Stream.Timeouts = ffi.new("int[2]")
+	Stream.TCP = true
+
 	return Stream
 end
 
@@ -1381,8 +1390,17 @@ function TTCPStream:Accept()
 
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
-	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
-	Stream.LocalPort = sock.ntohs(Address.sin_port)
+
+	local LocalIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+	local LocalPort = tonumber(sock.ntohs(Address.sin_port))
+	local RemoteIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+	local RemotePort = tonumber(sock.ntohs(Address.sin_port))
+
+	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
+	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
+	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
+
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
 	return Stream
@@ -1415,10 +1433,15 @@ function TTCPStream:accept()
 	local Stream = ffi.new("struct TTCPStream")
 	Stream.Socket = Socket
 
-	Stream.LocalIP = sock.inet_ntoa(Address.sin_addr)
-	Stream.LocalPort = sock.ntohs(Address.sin_port)
-	Stream.RemoteIP = sock.inet_ntoa(Address.sin_addr)
-	Stream.RemotePort = sock.ntohs(Address.sin_port)
+	local LocalIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+	local LocalPort = tonumber(sock.ntohs(Address.sin_port))
+	local RemoteIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+	local RemotePort = tonumber(sock.ntohs(Address.sin_port))
+
+	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
+	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
+	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
@@ -1462,8 +1485,12 @@ function TTCPStream:bind(Address, Port)
 			return nil, socket_strerror(GetSockNameError)
 		end
 
-		self.LocalIP = sock.inet_ntoa(SockAddress.sin_addr)
-		self.LocalPort = sock.ntohs(SockAddress.sin_port)
+		local LocalIP = ffi.string(sock.inet_ntoa(SockAddress.sin_addr))
+		local LocalPort = tonumber(sock.ntohs(SockAddress.sin_port))
+
+		self.LocalIP = ffi.new("char[?]", #LocalIP, LocalIP)
+		self.LocalPort = ffi.new("unsigned short", LocalPort)
+
 		self.Timeouts = ffi.new("int[2]")
 		return true
 	end
@@ -1528,8 +1555,11 @@ function TTCPStream:connect(address, port)
 		return nil, socket_strerror(GetPeerNameError)
 	end
 
-	self.RemoteIP = sock.inet_ntoa(PeerAddress.sin_addr) -- For some reason self.LocalIP is assigned to self.RemoteIP on this line
-	self.RemotePort = sock.ntohs(PeerAddress.sin_port)
+	local RemoteIP = ffi.string(sock.inet_ntoa(PeerAddress.sin_addr))
+	local RemotePort = tonumber(sock.ntohs(PeerAddress.sin_port))
+
+	self.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
+	self.RemotePort = ffi.new("unsigned short", RemotePort)
 	return true
 end
 
