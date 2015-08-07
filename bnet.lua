@@ -1407,142 +1407,103 @@ function TTCPStream:accept()
 	Stream.LocalPort = sock.ntohs(Address.sin_port)
 	Stream.Timeouts = ffi.new("int[2]")
 	Stream.TCP = true
+	Stream.IsClient = true
 	return Stream
 end
 
 function TTCPStream:bind(Address, Port)
-	if Address == "*" then
-		if bind_(self.Socket, AF_INET, Port or 0) == SOCKET_ERROR then
-			local BindError = ffi.errno()
+	if self.LocalPort == 0 then
+		if Address == "*" then
+			if bind_(self.Socket, AF_INET, Port or 0) == SOCKET_ERROR then
+				local BindError = ffi.errno()
 
-			local Error = sock.shutdown(self.Socket, SD_BOTH)
-			if Error ~= 0 then
-				return nil, socket_strerror(Error)
+				local Error = sock.shutdown(self.Socket, SD_BOTH)
+				if Error ~= 0 then
+					return nil, socket_strerror(Error)
+				end
+
+				local Error = closesocket_(self.Socket)
+				if Error ~= 0 then
+					return nil, socket_strerror(Error)
+				end
+				return nil, socket_strerror(BindError)
 			end
 
-			local Error = closesocket_(self.Socket)
-			if Error ~= 0 then
-				return nil, socket_strerror(Error)
+			local SAddress = ffi.new("struct sockaddr_in")
+			local Addr = ffi.cast("struct sockaddr * ", SAddress)
+			local SizePtr = ffi.new("int[1]")
+			SizePtr[0] = ffi.sizeof(SAddress)
+
+			if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
+				local GetSockNameError = ffi.errno()
+
+				local Error = sock.shutdown(self.Socket, SD_BOTH)
+				if Error ~= 0 then
+					return nil, socket_strerror(Error)
+				end
+
+				local Error = closesocket_(self.Socket)
+				if Error ~= 0 then
+					return nil, socket_strerror(Error)
+				end
+
+				return nil, socket_strerror(GetSockNameError)
 			end
-			return nil, socket_strerror(BindError)
+
+			self.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
+			self.LocalPort = sock.ntohs(SAddress.sin_port)
+			self.Timeouts = ffi.new("int[2]")
+			return true
 		end
-
-		local SAddress = ffi.new("struct sockaddr_in")
-		local Addr = ffi.cast("struct sockaddr * ", SAddress)
-		local SizePtr = ffi.new("int[1]")
-		SizePtr[0] = ffi.sizeof(SAddress)
-
-		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
-			local GetSockNameError = ffi.errno()
-
-			local Error = sock.shutdown(self.Socket, SD_BOTH)
-			if Error ~= 0 then
-				return nil, socket_strerror(Error)
-			end
-
-			local Error = closesocket_(self.Socket)
-			if Error ~= 0 then
-				return nil, socket_strerror(Error)
-			end
-
-			return nil, socket_strerror(GetSockNameError)
-		end
-
-		self.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
-		self.LocalPort = sock.ntohs(SAddress.sin_port)
-		self.Timeouts = ffi.new("int[2]")
-		return true
 	end
+	return nil, socket_strerror(10048)
 end
 
 function TTCPStream:connect(address, port)
-	local AddressIP = sock.inet_addr(address)
-	local PAddress
-	if ServerIP == INADDR_NONE then
-		local Addresses, AddressType, AddressLength = gethostbyname_(address)
-		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
-			return nil
-		elseif Addresses[0] == nil then
-			return nil
+	if not self.IsClient and not self.IsServer then
+		if self.LocalPort == 0 then
+			self:bind("*", Port)
 		end
-		PAddress = Addresses[0]
-		local NAddress = {[0] = PAddress[0], PAddress[1], PAddress[2], PAddress[3]}
-		if PAddress[0] < 0 then NAddress[0] = PAddress[0] + 256 end
-		if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
-		if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
-		if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
-		ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
+
+		local ServerIP = sock.inet_addr(address)
+		local PAddress
+		if ServerIP == INADDR_NONE then
+			local Addresses, AddressType, AddressLength = gethostbyname_(Server)
+			if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
+				return nil
+			end
+			if Addresses[0] == nil then
+				return nil
+			end
+			PAddress = Addresses[0]
+			local NAddress = {[0] = PAddress[0], PAddress[1], PAddress[2], PAddress[3]}
+			if PAddress[0] < 0 then NAddress[0] = PAddress[0] + 256 end
+			if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
+			if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
+			if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
+			ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
+		end
+
+		local ServerPtr = ffi.new("int[1]", ServerIP)
+		if connect_(self.Socket, ServerPtr, AF_INET, 4, port) == SOCKET_ERROR then
+			local ConnectError = ffi.errno()
+
+			local Error = sock.shutdown(self.Socket, SD_BOTH)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			local Error = closesocket_(self.Socket)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			return nil, socket_strerror(ConnectError)
+		end
+		self.IsClient = true
+		return true
 	end
-
-	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
-	if Socket == INVALID_SOCKET then
-		return nil
-	end
-
-	if bind_(Socket, AF_INET, port or 0) == SOCKET_ERROR then
-		local BindError = ffi.errno()
-
-		local Error = sock.shutdown(Socket, SD_BOTH)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		local Error = closesocket_(Socket)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		return nil, socket_strerror(BindError)
-	end
-
-	local SAddress = ffi.new("struct sockaddr_in")
-	local Addr = ffi.cast("struct sockaddr *", SAddress)
-	local SizePtr = ffi.new("int[1]")
-	SizePtr[0] = ffi.sizeof(SAddress)
-
-	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetSockNameError = ffi.errno()
-
-		local Error = sock.shutdown(Socket, SD_BOTH)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		local Error = closesocket_(Socket)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		return nil, socket_strerror(GetSockNameError)
-	end
-
-	local Stream = ffi.new("struct TTCPStream")
-	Stream.Socket = Socket
-	Stream.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
-	Stream.LocalPort = sock.ntohs(SAddress.sin_port)
-	Stream.Timeouts = ffi.new("int[2]")
-	Stream.TCP = true
-	Stream.IsClient = true
-
-	local ServerPtr = ffi.new("int[1]")
-	ServerPtr[0] = ServerIP
-
-	if connect_(Socket, ServerPtr, AF_INET, 4, ServerPort) == SOCKET_ERROR then
-		local ConnectError = ffi.errno()
-
-		local Error = sock.shutdown(Socket, SD_BOTH)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		local Error = closesocket_(Socket)
-		if Error ~= 0 then
-			return nil, socket_strerror(Error)
-		end
-
-		return nil, socket_strerror(ConnectError)
-	end
-	return Stream
+	return nil, socket_strerror(10056)
 end
 
 function TTCPStream:getpeername()
@@ -1666,12 +1627,11 @@ end
 
 function TTCPStream:settimeout(value, mode)
 	if not mode then
-		self.Timeouts[0] = value
-		self.Timeouts[1] = value
+		self.Timeouts = ffi.new("int[2]", {value, value})
 	elseif mode == "b" then
-		self.Timeouts[0] = value
+		self.Timeouts = ffi.new("int[2]", {value, self.Timeouts[1]})
 	elseif mode == "t" then
-		self.Timeouts[1] = value
+		self.Timeouts = ffi.new("int[2]", {self.Timeouts[0], value})
 	end
 end
 
