@@ -28,6 +28,7 @@ local socket = {
 }
 
 ffi.cdef [[
+	typedef uintptr_t SOCKET;
 	struct TUDPStream {
 		int Timeout;
 		SOCKET Socket;
@@ -67,7 +68,6 @@ if ffi.os == "Windows" then
 		typedef uint16_t u_short;
 		typedef uint32_t u_int;
 		typedef unsigned long u_long;
-		typedef uintptr_t SOCKET;
 		typedef unsigned char byte;
 		struct sockaddr {
 			unsigned short sa_family;
@@ -186,7 +186,6 @@ else
 		typedef uint16_t u_short;
 		typedef uint32_t u_int;
 		typedef unsigned long u_long;
-		typedef uintptr_t SOCKET;
 		typedef unsigned char byte;
 		struct sockaddr {
 			unsigned short sa_family;
@@ -1433,7 +1432,7 @@ end
 
 function TTCPStream:bind(Address, Port)
 	if Address == "*" then
-		if bind_(self.Socket, AF_INET, Port) == SOCKET_ERROR then
+		if bind_(self.Socket, AF_INET, Port or 0) == SOCKET_ERROR then
 			local BindError = ffi.errno()
 
 			local Error = sock.shutdown(self.Socket, SD_BOTH)
@@ -1445,7 +1444,6 @@ function TTCPStream:bind(Address, Port)
 			if Error ~= 0 then
 				return nil, socket_strerror(Error)
 			end
-
 			return nil, socket_strerror(BindError)
 		end
 
@@ -1469,6 +1467,7 @@ function TTCPStream:bind(Address, Port)
 
 			return nil, socket_strerror(GetSockNameError)
 		end
+
 		self.LocalIP = sock.inet_ntoa(SAddress.sin_addr)
 		self.LocalPort = sock.ntohs(SAddress.sin_port)
 		self.Timeouts = ffi.new("int[2]")
@@ -1567,11 +1566,11 @@ function TTCPStream:connect(address, port)
 end
 
 function TTCPStream:getpeername()
-	return ffi.string(self.LocalIP), tonumber(self.Port)
+	return ffi.string(self.LocalIP), tonumber(self.LocalPort)
 end
 
 function TTCPStream:getsockname()
-	return ffi.string(self.LocalIP), tonumber(self.Port)
+	return ffi.string(self.LocalIP), tonumber(self.LocalPort)
 end
 
 function TTCPStream:getstats()
@@ -1741,10 +1740,11 @@ end
 function socket.tcp()
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
-		return false, ""
+		return nil, socket_strerror(ffi.errno())
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
+	Stream.Socket = Socket
 	Stream.TCP = true
 	return Stream
 end
@@ -1786,9 +1786,9 @@ end
 
 -- socket.sleep(time)
 if ffi.os == "Windows" then
-	ffi.cdef [[void sleep(int ms);]]
+	ffi.cdef [[void Sleep(int ms);]]
 	function socket.sleep(t)
-		C.sleep(t * 1000)
+		C.Sleep(t * 1000)
 	end
 else
 	ffi.cdef [[int poll(struct pollfd * fds, unsigned long nfds, int timeout);]]
@@ -1798,22 +1798,43 @@ else
 end
 
 -- socket.gettime()
-ffi.cdef [[
-	struct timeval {
-		long tv_sec;
-		long tv_usec;
-	};
-	struct timezone {
-		int tz_minuteswest;
-		int_tz_dsttime;
-	};
-	int gettimeofday(struct timeval * tv, struct timezone * tz);
-]]
-local _Start = ffi.new("struct timeval"); C.gettimeofday(_Start, nil)
-function socket.gettime()
-	local Time = ffi.new("struct timeval")
-	C.gettimeofday(Time, nil)
-	return (Time.tv_sec + Time.tv_usec/1.0e6) - Start
+if ffi.os == "Windows" then
+	ffi.cdef [[
+		typedef struct _SYSTEMTIME {
+			WORD wYear;
+			WORD wMonth;
+			WORD wDayOfWeek;
+			WORD wDay;
+			WORD wHour;
+			WORD wMinute;
+			WORD wSecond;
+			WORD wMilliseconds;
+		} SYSTEMTIME, *PSYSTEMTIME, *LPSYSTEMTIME;;
+		void GetSystemTime(LPSYSTEMTIME lpSystemTime);
+	]]
+	local Start = ffi.new("SYSTEMTIME"); C.GetSystemTime(Start)
+	local StartTime = Start.wSecond + Start.wMilliseconds/1000
+
+	function socket.gettime()
+		local Time = ffi.new("SYSTEMTIME"); C.GetSystemTime(Time)
+		return (Time.wSecond + Time.wMilliseconds/1000) - StartTime
+	end
+else
+	ffi.cdef [[
+		struct timezone {
+			int tz_minuteswest;
+			int tz_dsttime;
+		};
+		int gettimeofday(struct timeval * tv, struct timezone * tz);
+	]]
+
+	local Start = ffi.new("struct timeval"); C.gettimeofday(Start, nil)
+	local StartTime = Start.tv_sec + Start.tv_usec/1.0e6
+
+	function socket.gettime()
+		local Time = ffi.new("struct timeval"); C.gettimeofday(Time, nil)
+		return (Time.tv_sec + Time.tv_usec/1.0e6) - StartTime
+	end
 end
 
 return socket
