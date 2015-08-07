@@ -660,10 +660,23 @@ function CountHostIPs(Host)
 end
 
 function IntIP(IP)
-	assert(IP)
-	local InetADDR = sock.inet_addr(IP)
-	local HTONL = sock.htonl(InetADDR)
-	return HTONL
+	local ServerIP = sock.inet_addr(IP)
+	if ServerIP == INADDR_NONE then
+		local Addresses, AddressType, AddressLength = gethostbyname_(IP)
+		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
+			return nil
+		end
+		if Addresses[0] == nil then
+			return nil
+		end
+		local PAddress = Addresses[0]
+		local NAddress = {}
+		for i = 0, 3 do
+			NAddress[i] = tonumber(PAddress[i])
+		end
+		return sock.htonl(bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0]))
+	end
+	return 0
 end
 
 function StringIP(IP)
