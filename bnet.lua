@@ -31,19 +31,23 @@ ffi.cdef [[
 	struct TUDPStream {
 		int Timeout;
 		SOCKET Socket;
+
 		char * LocalIP;
 		int LocalPort;
+
 		char * MessageIP;
 		int MessagePort;
+
 		int RecvSize;
 		int SendSize;
-		void * RecvBuffer;
-		void * SendBuffer;
+		char * RecvBuffer;
+		char * SendBuffer;
 		bool UDP;
 	};
 	struct TTCPStream {
 		int * Timeouts;
 		SOCKET Socket;
+
 		char * LocalIP;
 		int LocalPort;
 
@@ -96,7 +100,7 @@ if ffi.os == "Windows" then
 			char **h_aliases;
 			short h_addrtype;
 			short h_length;
-			char **h_addr_list;
+			byte **h_addr_list;
 		};
 		typedef struct timeval {
 			long tv_sec;
@@ -204,7 +208,7 @@ else
 			char **h_aliases;
 			short h_addrtype;
 			short h_length;
-			char **h_addr_list;
+			byte **h_addr_list;
 		};
 		typedef struct timeval {
 			long int tv_sec;
@@ -1168,7 +1172,6 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	end
 
 	local ServerIP = sock.inet_addr(Server)
-	local PAddress
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(Server)
 		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
@@ -1177,12 +1180,11 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 		if Addresses[0] == nil then
 			return nil
 		end
-		PAddress = Addresses[0]
-		local NAddress = {[0] = PAddress[0], PAddress[1], PAddress[2], PAddress[3]}
-		if PAddress[0] < 0 then NAddress[0] = PAddress[0] + 256 end
-		if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
-		if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
-		if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
+		local PAddress = Addresses[0]
+		local NAddress = {}
+		for i = 0, 3 do
+			NAddress[i] = tonumber(PAddress[i])
+		end
 		ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
 	end
 
@@ -1452,25 +1454,26 @@ end
 function TTCPStream:connect(address, port)
 	if not self.IsClient and not self.IsServer then
 		if self.LocalPort == 0 then
-			self:bind("*", Port)
+			local Success, Error = self:bind("*", Port)
+			if not Success then
+				return nil, Error
+			end
 		end
 
 		local ServerIP = sock.inet_addr(address)
-		local PAddress
 		if ServerIP == INADDR_NONE then
-			local Addresses, AddressType, AddressLength = gethostbyname_(Server)
+			local Addresses, AddressType, AddressLength = gethostbyname_(address)
 			if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
 				return nil
 			end
 			if Addresses[0] == nil then
 				return nil
 			end
-			PAddress = Addresses[0]
-			local NAddress = {[0] = PAddress[0], PAddress[1], PAddress[2], PAddress[3]}
-			if PAddress[0] < 0 then NAddress[0] = PAddress[0] + 256 end
-			if PAddress[1] < 0 then NAddress[1] = PAddress[1] + 256 end
-			if PAddress[2] < 0 then NAddress[2] = PAddress[2] + 256 end
-			if PAddress[3] < 0 then NAddress[3] = PAddress[3] + 256 end
+			local PAddress = Addresses[0]
+			local NAddress = {}
+			for i = 0, 3 do
+				NAddress[i] = tonumber(PAddress[i])
+			end
 			ServerIP = bit.bor(bit.lshift(NAddress[3], 24), bit.lshift(NAddress[2], 16), bit.lshift(NAddress[1], 8), NAddress[0])
 		end
 
