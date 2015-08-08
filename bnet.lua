@@ -38,6 +38,9 @@ ffi.cdef [[
 		char * MessageIP;
 		unsigned short MessagePort;
 
+		char * RemoteIP;
+		unsigned short RemotePort;
+
 		int RecvSize;
 		int SendSize;
 		char * RecvBuffer;
@@ -396,11 +399,8 @@ local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, mil
 	if millis < 0 then
 		tvp = ffi.new("struct timeval[0]")
 	else
-		tv = ffi.new("struct timeval")
-		tv.tv_sec = millis / 1000
-		tv.tv_usec = (millis % 1000) / 1000
-		tvp = ffi.new("struct timeval[1]")
-		tvp[0] = tv
+		local tv = ffi.new("struct timeval", {tv_sec = millis / 1000, tv_usec = (millis % 1000) / 1000})
+		tvp = ffi.new("struct timeval [1]", tv)
 	end
 
 	local r = sock.select(n + 1, r_set, w_set, e_set, tvp)
@@ -1408,6 +1408,7 @@ end
 
 ---------- LuaSocket-like api
 
+-- TCP streams
 function TTCPStream:accept()
 	if self.Socket == INVALID_SOCKET then
 		return nil
@@ -1701,7 +1702,169 @@ function TTCPStream:shutdown(mode)
 	end
 end
 
--- socket.connect(address, port)
+-- UDP streams
+
+function TUDPStream:close()
+	local Error = sock.shutdown(self.Socket, SD_BOTH)
+	if Error ~= 0 then
+		return false, socket_strerror(Error)
+	end
+
+	local Error = closesocket_(self.Socket)
+	if Error ~= 0 then
+		return false, socket_strerror(Error)
+	end
+	self.Socket = INVALID_SOCKET
+	return true
+end
+
+function TUDPStream:getpeername()
+	return ffi.string(self.RemoteIP), tonumber(self.RemotePort)
+end
+
+function TUDPStream:getsockname()
+	return ffi.string(self.LocalIP), tonumber(self.LocalPort)
+end
+
+function TUDPStream:receive(size)
+	local size = size or 4096
+	if self.Socket == INVALID_SOCKET then
+		return false
+	end
+
+	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) ~= 1 then
+		return false
+	end
+
+	local Size = ffi.new("int[1]")
+	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
+		return false
+	end
+
+	Size = Size[0]
+	if Size <= 0 then
+		return false
+	end
+
+	if self.RecvSize > 0 then
+		local NewBuffer = ffi.new("char ["..self.RecvSize + Size.."]")
+		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
+		self.RecvBuffer = NewBuffer
+	else
+		self.RecvBuffer = ffi.new("char ["..Size.."]")
+	end
+
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer, Size, 0)
+	if Result == SOCKET_ERROR or Result == 0 then
+		return false
+	end
+	self.MessageIP = MessageIP
+	self.MessagePort = MessagePort
+	self.RecvSize = self.RecvSize + Result
+
+	if self.RemoteIP == nil or self.RemotePort == nil then
+		return nil, "timeout"
+	elseif MessageIP ~= ffi.string(self.RemoteIP) or MessagePort ~= tonumber(self.RemotePort) then
+		return nil, "timeout"
+	end
+
+	local String = self:ReadString(Size)
+	if String == nil then
+		return nil, "timeout"
+	end
+	return String
+end
+
+function TUDPStream:receivefrom()
+end
+
+function TUDPStream:send(datagram)
+	if select_(0, nil, 1, {self.Socket}, 0, nil, 0) ~= 1 then
+		return nil, socket_strerror(ffi.errno())
+	end
+
+	local IP = ffi.string(self.RemoteIP) or ""
+	local Port = self.RemotePort or 0
+	local Result = sendto_(self.Socket, datagram, self.SendSize, 0, IP, Port)
+	if Result == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
+	end
+	return true
+end
+
+function TUDPStream:sendto(datagram, ip, port)
+	if select_(0, nil, 1, {self.Socket}, 0, nil, 0) ~= 1 then
+		return nil, socket_strerror(ffi.errno())
+	end
+
+	local Result = sendto_(self.Socket, datagram, self.SendSize, 0, ip, port)
+	if Result == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
+	end
+	return true
+end
+
+function TUDPStream:setpeername(address, port)
+	if self.LocalPort == 0 then
+		local Bind, Error = self:setsockname("*", 0)
+		if Bind == nil then
+			return nil, Error
+		end
+	end
+	self.RemoteIP = address
+	self.RemotePort = port
+end
+
+function TUDPStream:setsockname(address, port)
+	if address == "*" then
+		if bind_(self.Socket, AF_INET, port or 0) == SOCKET_ERROR then
+			local BindError = ffi.errno()
+
+			local Error = sock.shutdown(Socket, SD_BOTH)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			local Error = closesocket_(Socket)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			return nil, socket_strerror(BindError)
+		end
+
+		local Address = ffi.new("struct sockaddr_in")
+		local Addr = ffi.cast("struct sockaddr *", Address)
+		local SizePtr = ffi.new("int[1]", ffi.sizeof(Address))
+
+		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
+			local GetSockNameError = ffi.errno()
+
+			local Error = sock.shutdown(Socket, SD_BOTH)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			local Error = closesocket_(Socket)
+			if Error ~= 0 then
+				return nil, socket_strerror(Error)
+			end
+
+			return nil, socket_strerror(GetSockNameError)
+		end
+
+		local LocalIP = ffi.string(sock.inet_ntoa(Address.sin_addr))
+		local LocalPort = tonumber(sock.ntohs(Address.sin_port))
+
+		self.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
+		self.LocalPort = ffi.new("unsigned short", LocalPort)
+		return true
+	end
+end
+
+function TUDPStream:settimeout(value)
+	self.Timeout = value
+end
 
 -- socket.tcp()
 function socket.tcp()
@@ -1715,6 +1878,23 @@ function socket.tcp()
 	Stream.TCP = true
 	return Stream
 end
+
+-- socket.udp()
+function socket.udp()
+	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
+	if Socket == INVALID_SOCKET then
+		return nil
+	end
+
+	local Stream = ffi.new("struct TUDPStream")
+	Stream.Socket = Socket
+	Stream.UDP = true
+
+	Stream.SendBuffer = ffi.new("char [0]")
+	Stream.RecvBuffer = ffi.new("char [0]")
+	return Stream
+end
+
 
 -- socket.protect(func)
 function socket.protect(func)
@@ -1734,9 +1914,24 @@ end
 -- socket.select(recvt, sendt [, timeout])
 function socket.select(recvt, sendt, timeout)
 	if type(recvt) == "table" then
+		local ReceiveTable = {}
 		for _, Stream in pairs(recvt) do
-
+			table.insert(ReceiveTable, Stream.Socket)
 		end
+
+		local SendTable = {}
+		for _, Stream in pairs(SendTable) do
+			table.insert(SendTable, Stream.Socket)
+		end
+
+		local Select = select_(#ReceiveTable, ReceiveTable, #SendTable, SendTable, 0, nil, timeout or 0)
+		if Select == SOCKET_ERROR then
+			return nil, nil, socket_strerror(ffi.errno())
+		end
+
+		table.sort(ReceiveTable)
+		table.sort(SendTable)
+		return ReceiveTable, SendTable
 	end
 end
 
@@ -1749,6 +1944,44 @@ function socket.skip(d, ...)
 		end
 	end
 	return unpack(skip)
+end
+
+-- socket.bind(address, port [, backlog])
+function socket.bind(address, port, backlog)
+	local Stream, Error = socket.tcp()
+	if Stream == nil then
+		return nil, Error
+	end
+
+	local Bind, Error = Stream:bind(address or "*", port)
+	if Bind == nil then
+		return nil, Error
+	end
+
+	local Listen, Error = Stream:listen(backlog)
+	if Listen == nil then
+		return nil, Error
+	end
+	return Stream
+end
+
+-- socket.connect(address, port [, locaddr, locport])
+function socket.connect(address, port, locaddr, locport)
+	local Stream, Error = socket.tcp()
+	if Stream == nil then
+		return nil, Error
+	end
+
+	local Bind, Error = Stream:bind(locaddr or "*", locport)
+	if Bind == nil then
+		return nil, Error
+	end
+
+	local Connected, Error = Stream:connect(address, port)
+	if Connected == nil then
+		return nil, Error
+	end
+	return Stream
 end
 
 -- socket.sleep(time)

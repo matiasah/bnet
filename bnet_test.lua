@@ -1,3 +1,7 @@
+for k, v in pairs(package.loaders) do
+	print("lib", k)
+end
+
 local ffi = require("ffi")
 local bit = require("bit")
 socket = require("bnet")
