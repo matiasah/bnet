@@ -695,26 +695,26 @@ function UDP:__gc()
 end
 
 function TUDPStream:ReadByte()
-	local n = ffi.new("byte[1]"); self:Read(n, 1)
+	local n = ffi.new("byte [1]"); self:Read(n, 1)
 	return n[0]
 end
 
 function TUDPStream:ReadShort()
-	local n = ffi.new("byte[2]"); self:Read(n, 2)
+	local n = ffi.new("byte [2]"); self:Read(n, 2)
 	return n[0] + n[1] * 256
 end
 
 function TUDPStream:ReadInt()
-	local n = ffi.new("byte[4]"); self:Read(n, 4)
+	local n = ffi.new("byte [4]"); self:Read(n, 4)
 	return n[0] + n[1] * 256 + n[2] * 65536 + n[3] * 16777216
 end
 
 function TUDPStream:ReadLong()
-	local n = ffi.new("byte[8]"); self:Read(n, 8)
-	local Value = ffi.new("uint64_t")
-	local LongByte = ffi.new("uint64_t", 256)
+	local n = ffi.new("byte [8]"); self:Read(n, 8)
+	local Value = ffi.new("unsigned long")
+	local LongByte = ffi.new("unsigned long", 256)
 	for i = 0, 7 do
-		Value = Value + ffi.new("uint64_t", n[i]) * LongByte ^ i
+		Value = Value + ffi.new("unsigned long", n[i]) * LongByte ^ i
 	end
 	return Value
 end
@@ -736,27 +736,27 @@ end
 
 function TUDPStream:ReadString(Length)
 	if Length > 0 then
-		local Buffer = ffi.new("byte["..Length.."]"); self:Read(Buffer, Length)
+		local Buffer = ffi.new("byte [?]", Length); self:Read(Buffer, Length)
 		return ffi.string(Buffer, Length)
 	end
 	return ""
 end
 
 function TUDPStream:WriteByte(n)
-	local q = ffi.new("byte[1]")
+	local q = ffi.new("byte [1]")
 	q[0] = n % 256
 	return self:Write(q, 1)
 end
 
 function TUDPStream:WriteShort(n)
-	local q = ffi.new("byte[2]")
+	local q = ffi.new("byte [2]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256
 	return self:Write(q, 2)
 end
 
 function TUDPStream:WriteInt(n)
-	local q = ffi.new("byte[4]")
+	local q = ffi.new("byte [4]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256; n = (n - q[1])/256
 	q[2] = n % 256; n = (n - q[2])/256
@@ -765,7 +765,7 @@ function TUDPStream:WriteInt(n)
 end
 
 function TUDPStream:WriteLong(n)
-	local q = ffi.new("byte[8]")
+	local q = ffi.new("byte [8]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256; n = (n - q[1])/256
 	q[2] = n % 256; n = (n - q[2])/256
@@ -778,7 +778,7 @@ function TUDPStream:WriteLong(n)
 end
 
 function TUDPStream:WriteLine(String)
-	local Line = String.."\n"
+	local Line = String .. "\n"
 	return self:Write(Line, #Line)
 end
 
@@ -794,7 +794,7 @@ function TUDPStream:Read(Buffer, Size)
 			self.RecvBuffer = self.RecvBuffer + Size
 			self.RecvSize = self.RecvSize - Size
 		else
-			self.RecvBuffer = ffi.new("char [0]")
+			self.RecvBuffer = ffi.new("byte [0]")
 			self.RecvSize = 0
 		end
 	end
@@ -802,7 +802,7 @@ function TUDPStream:Read(Buffer, Size)
 end
 
 function TUDPStream:Write(Buffer, Size)
-	local NewBuffer = ffi.new("char ["..self.SendSize + Size.."]")
+	local NewBuffer = ffi.new("byte [?]", self.SendSize + Size)
 	if self.SendSize > 0 then
 		ffi.copy(NewBuffer, self.SendBuffer, self.SendSize)
 		ffi.copy(NewBuffer + self.SendSize, Buffer, Size)
@@ -871,12 +871,12 @@ function TUDPStream:SendTo(IP, Port)
 	end
 
 	if Result == self.SendSize then
-		self.SendBuffer = ffi.new("char [0]")
+		self.SendBuffer = ffi.new("byte [0]")
 		self.SendSize = 0
 		return true
 	end
 
-	local NewBuffer = ffi.new("char ["..self.SendSize - Result.."]")
+	local NewBuffer = ffi.new("byte [?]", self.SendSize - Result)
 	ffi.copy(NewBuffer, self.SendBuffer + Result, self.SendSize - Result)
 	self.SendBuffer = NewBuffer
 	self.SendSize = self.SendSize - Result
@@ -892,7 +892,7 @@ function TUDPStream:RecvFrom()
 		return false
 	end
 
-	local Size = ffi.new("int[1]")
+	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
 		return false
 	end
@@ -903,14 +903,14 @@ function TUDPStream:RecvFrom()
 	end
 
 	if self.RecvSize > 0 then
-		local NewBuffer = ffi.new("char ["..self.RecvSize + Size.."]")
+		local NewBuffer = ffi.new("byte [?]", self.RecvSize + Size)
 		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
 		self.RecvBuffer = NewBuffer
 	else
-		self.RecvBuffer = ffi.new("char ["..Size.."]")
+		self.RecvBuffer = ffi.new("byte [?]", Size)
 	end
 
-	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer, Size, 0)
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer + self.RecvSize, Size, 0)
 	if Result == SOCKET_ERROR or Result == 0 then
 		return false
 	end
@@ -961,7 +961,7 @@ function socket.CreateUDPStream(Port)
 
 	local Address = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", Address)
-	local SizePtr = ffi.new("int[1]")
+	local SizePtr = ffi.new("int [1]")
 	SizePtr[0] = ffi.sizeof(Address)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
@@ -989,8 +989,8 @@ function socket.CreateUDPStream(Port)
 	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
 	Stream.UDP = true
 
-	Stream.SendBuffer = ffi.new("char [0]")
-	Stream.RecvBuffer = ffi.new("char [0]")
+	Stream.SendBuffer = ffi.new("byte [0]")
+	Stream.RecvBuffer = ffi.new("byte [0]")
 	return Stream
 end
 
@@ -1003,26 +1003,26 @@ function TCP:__gc()
 end
 
 function TTCPStream:ReadByte()
-	local n = ffi.new("byte[1]"); self:Read(n, 1)
+	local n = ffi.new("byte [1]"); self:Read(n, 1)
 	return n[0]
 end
 
 function TTCPStream:ReadShort()
-	local n = ffi.new("byte[2]"); self:Read(n, 2)
+	local n = ffi.new("byte [2]"); self:Read(n, 2)
 	return n[0] + n[1] * 256
 end
 
 function TTCPStream:ReadInt()
-	local n = ffi.new("byte[4]"); self:Read(n, 4)
+	local n = ffi.new("byte [4]"); self:Read(n, 4)
 	return n[0] + n[1] * 256 + n[2] * 65536 + n[3] * 16777216
 end
 
 function TTCPStream:ReadLong()
-	local n = ffi.new("byte[8]"); self:Read(n, 8)
-	local Value = ffi.new("uint64_t")
-	local LongByte = ffi.new("uint64_t", 256)
+	local n = ffi.new("byte [8]"); self:Read(n, 8)
+	local Value = ffi.new("unsigned long")
+	local LongByte = ffi.new("unsigned long", 256)
 	for i = 0, 7 do
-		Value = Value + ffi.new("uint64_t", n[i]) * LongByte ^ i
+		Value = Value + ffi.new("unsigned long", n[i]) * LongByte ^ i
 	end
 	return Value
 end
@@ -1044,27 +1044,27 @@ end
 
 function TTCPStream:ReadString(Length)
 	if Length > 0 then
-		local Buffer = ffi.new("byte["..Length.."]"); self:Read(Buffer, Length)
+		local Buffer = ffi.new("byte [?]", Length); self:Read(Buffer, Length)
 		return ffi.string(Buffer, Length)
 	end
 	return ""
 end
 
 function TTCPStream:WriteByte(n)
-	local q = ffi.new("byte[1]")
+	local q = ffi.new("byte [1]")
 	q[0] = n % 256
 	return self:Write(q, 1)
 end
 
 function TTCPStream:WriteShort(n)
-	local q = ffi.new("byte[2]")
+	local q = ffi.new("byte [2]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256
 	return self:Write(q, 2)
 end
 
 function TTCPStream:WriteInt(n)
-	local q = ffi.new("byte[4]")
+	local q = ffi.new("byte [4]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256; n = (n - q[1])/256
 	q[2] = n % 256; n = (n - q[2])/256
@@ -1073,7 +1073,7 @@ function TTCPStream:WriteInt(n)
 end
 
 function TTCPStream:WriteLong(n)
-	local q = ffi.new("byte[8]")
+	local q = ffi.new("byte [8]")
 	q[0] = n % 256; n = (n - q[0])/256
 	q[1] = n % 256; n = (n - q[1])/256
 	q[2] = n % 256; n = (n - q[2])/256
@@ -1099,7 +1099,7 @@ function TTCPStream:SetTimeout(Read, Accept)
 	assert(Accept)
 	if Read < 0 then Read = 0 end
 	if Accept < 0 then Accept = 0 end
-	self.Timeouts = ffi.new("int[2]", Read, Accept)
+	self.Timeouts = ffi.new("int [2]", Read, Accept)
 end
 
 function TTCPStream:Read(Buffer, Size)
@@ -1139,7 +1139,7 @@ function TTCPStream:Write(Buffer, Size)
 end
 
 function TTCPStream:Size()
-	local Size = ffi.new("int[1]")
+	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
 		return nil, socket_strerror(ffi.errno())
 	end
@@ -1214,7 +1214,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 
 	local SAddress = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", SAddress)
-	local SizePtr = ffi.new("int[1]")
+	local SizePtr = ffi.new("int [1]")
 	SizePtr[0] = ffi.sizeof(SAddress)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
@@ -1260,7 +1260,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 
 	local RemoteAddress = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", RemoteAddress)
-	local SizePtr = ffi.new("int[1]", ffi.sizeof(RemoteAddress))
+	local SizePtr = ffi.new("int [1]", ffi.sizeof(RemoteAddress))
 
 	if sock.getpeername(Socket, Addr, SizePtr) == SOCKET_ERROR then
 		local GetPeerNameError = ffi.errno()
@@ -1316,7 +1316,7 @@ function socket.CreateTCPServer(Port, Backlog)
 
 	local SAddress = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", SAddress)
-	local SizePtr = ffi.new("int[1]")
+	local SizePtr = ffi.new("int [1]")
 	SizePtr[0] = ffi.sizeof(SAddress)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
@@ -1381,7 +1381,7 @@ function TTCPStream:Accept()
 
 	local Address = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", Address)
-	local SizePtr = ffi.new("int[1]", ffi.sizeof(Address))
+	local SizePtr = ffi.new("int [1]", ffi.sizeof(Address))
 
 	local Socket = sock.accept(self.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
@@ -1401,7 +1401,7 @@ function TTCPStream:Accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int[2]")
+	Stream.Timeouts = ffi.new("int [2]")
 	Stream.TCP = true
 	return Stream
 end
@@ -1424,7 +1424,7 @@ function TTCPStream:accept()
 
 	local Address = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", Address)
-	local SizePtr = ffi.new("int[1]", ffi.sizeof(Address))
+	local SizePtr = ffi.new("int [1]", ffi.sizeof(Address))
 
 	local Socket = sock.accept(self.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
@@ -1444,7 +1444,7 @@ function TTCPStream:accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int[2]")
+	Stream.Timeouts = ffi.new("int [2]")
 	Stream.TCP = true
 	return Stream
 end
@@ -1468,7 +1468,7 @@ function TTCPStream:bind(Address, Port)
 
 		local SockAddress = ffi.new("struct sockaddr_in")
 		local Addr = ffi.cast("struct sockaddr * ", SockAddress)
-		local SizePtr = ffi.new("int[1]", ffi.sizeof(SockAddress))
+		local SizePtr = ffi.new("int [1]", ffi.sizeof(SockAddress))
 
 		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
 			local GetSockNameError = ffi.errno()
@@ -1489,10 +1489,10 @@ function TTCPStream:bind(Address, Port)
 		local LocalIP = ffi.string(sock.inet_ntoa(SockAddress.sin_addr))
 		local LocalPort = tonumber(sock.ntohs(SockAddress.sin_port))
 
-		self.LocalIP = ffi.new("char[?]", #LocalIP, LocalIP)
+		self.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
 		self.LocalPort = ffi.new("unsigned short", LocalPort)
 
-		self.Timeouts = ffi.new("int[2]")
+		self.Timeouts = ffi.new("int [2]")
 		return true
 	end
 end
@@ -1519,7 +1519,7 @@ function TTCPStream:connect(address, port)
 		ServerIP = bit.bor(bit.lshift(PAddress[3], 24), bit.lshift(PAddress[2], 16), bit.lshift(PAddress[1], 8), PAddress[0])
 	end
 
-	local ServerPtr = ffi.new("int[1]", ServerIP)
+	local ServerPtr = ffi.new("int [1]", ServerIP)
 	if connect_(self.Socket, ServerPtr, AF_INET, 4, port) == SOCKET_ERROR then
 		local ConnectError = ffi.errno()
 
@@ -1538,7 +1538,7 @@ function TTCPStream:connect(address, port)
 
 	local PeerAddress = ffi.new("struct sockaddr_in")
 	local Addr = ffi.cast("struct sockaddr *", PeerAddress)
-	local SizePtr = ffi.new("int[1]", ffi.sizeof(PeerAddress))
+	local SizePtr = ffi.new("int [1]", ffi.sizeof(PeerAddress))
 
 	if sock.getpeername(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
 		local GetPeerNameError = ffi.errno()
@@ -1603,7 +1603,7 @@ function TTCPStream:receive(pattern, prefix)
 
 	local prefix = prefix or ""
 	if pattern == nil or pattern == "*a" then
-		local Buffer = ffi.new("byte[4096]")
+		local Buffer = ffi.new("byte [4096]")
 		local Result = sock.recv(self.Socket, Buffer, 4096, 0)
 		if Result == SOCKET_ERROR then
 			return nil, socket_strerror(ffi.errno())
@@ -1614,7 +1614,7 @@ function TTCPStream:receive(pattern, prefix)
 	elseif pattern == "*l" then
 		local Line = ""
 		repeat
-			local Buffer = ffi.new("byte[1]")
+			local Buffer = ffi.new("byte [1]")
 			local Result = sock.recv(self.Socket, Buffer, 1, 0)
 			if Result == SOCKET_ERROR then
 				return nil, socket_strerror(ffi.errno())
@@ -1632,7 +1632,7 @@ function TTCPStream:receive(pattern, prefix)
 	elseif type(pattern) == "number" then
 		local Size = tonumber(pattern)
 		if Size > 0 then
-			local Buffer = ffi.new("byte["..Size.."]")
+			local Buffer = ffi.new("byte [?]", Size)
 			local Result = sock.recv(self.Socket, Buffer, Size, 0)
 			if Result == SOCKET_ERROR then
 				return nil, socket_strerror(ffi.errno())
@@ -1661,11 +1661,8 @@ function TTCPStream:send(data, i, j)
 	end
 
 	local Select = select_(1, nil, 1, {self.Socket}, 0, nil, 0)
-	if Select ~= 1 then
-		if Select == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
-		end
-		return nil, "WTF?"
+	if Select == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
 	end
 
 	local Result = sock.send(self.Socket, data, #data, 0)
@@ -1684,11 +1681,11 @@ end
 
 function TTCPStream:settimeout(value, mode)
 	if not mode then
-		self.Timeouts = ffi.new("int[2]", {value, value})
+		self.Timeouts = ffi.new("int [2]", value, value)
 	elseif mode == "b" then
-		self.Timeouts = ffi.new("int[2]", {value, self.Timeouts[1]})
+		self.Timeouts = ffi.new("int [2]", value, self.Timeouts[1])
 	elseif mode == "t" then
-		self.Timeouts = ffi.new("int[2]", {self.Timeouts[0], value})
+		self.Timeouts = ffi.new("int [2]", self.Timeouts[0], value)
 	end
 end
 
@@ -1728,35 +1725,31 @@ end
 
 function TUDPStream:receive(size)
 	local size = size or 4096
-	if self.Socket == INVALID_SOCKET then
-		return false
+	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
 	end
 
-	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) ~= 1 then
-		return false
-	end
-
-	local Size = ffi.new("int[1]")
+	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-		return false
+		return nil, socket_strerror(ffi.errno())
 	end
 
 	Size = Size[0]
 	if Size <= 0 then
-		return false
+		return nil, "timeout"
 	end
 
 	if self.RecvSize > 0 then
-		local NewBuffer = ffi.new("char ["..self.RecvSize + Size.."]")
+		local NewBuffer = ffi.new("char [?]", self.RecvSize + Size)
 		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
 		self.RecvBuffer = NewBuffer
 	else
-		self.RecvBuffer = ffi.new("char ["..Size.."]")
+		self.RecvBuffer = ffi.new("char [?]", Size)
 	end
 
-	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer, Size, 0)
-	if Result == SOCKET_ERROR or Result == 0 then
-		return false
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer + self.RecvSize, Size, 0)
+	if Result == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
 	end
 	self.MessageIP = MessageIP
 	self.MessagePort = MessagePort
@@ -1768,14 +1761,49 @@ function TUDPStream:receive(size)
 		return nil, "timeout"
 	end
 
-	local String = self:ReadString(Size)
-	if String == nil then
-		return nil, "timeout"
-	end
-	return String
+	local Buffer = ffi.new("byte [?]", size)
+	self:Read(Buffer, size)
+
+	return ffi.string(Buffer)
 end
 
-function TUDPStream:receivefrom()
+function TUDPStream:receivefrom(size)
+	local size = size or 4096
+	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
+	end
+
+	local Size = ffi.new("int [1]")
+	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
+		return nil, socket_strerror(ffi.errno())
+	end
+
+	Size = Size[0]
+	if Size <= 0 then
+		return nil, "timeout"
+	end
+
+	if self.RecvSize > 0 then
+		local NewBuffer = ffi.new("char [?]", self.RecvSize + Size)
+		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
+		self.RecvBuffer = NewBuffer
+	else
+		self.RecvBuffer = ffi.new("char [?]", Size)
+	end
+
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer + self.RecvSize, Size, 0)
+	if Result == SOCKET_ERROR then
+		print("timeout")
+		return nil, socket_strerror(ffi.errno())
+	end
+	self.MessageIP = MessageIP
+	self.MessagePort = MessagePort
+	self.RecvSize = self.RecvSize + Result
+
+	local Buffer = ffi.new("byte [?]", size)
+	self:Read(Buffer, size)
+
+	return ffi.string(Buffer), ffi.string(MessageIP), tonumber(MessagePort)
 end
 
 function TUDPStream:send(datagram)
@@ -1785,7 +1813,7 @@ function TUDPStream:send(datagram)
 
 	local IP = ffi.string(self.RemoteIP) or ""
 	local Port = self.RemotePort or 0
-	local Result = sendto_(self.Socket, datagram, self.SendSize, 0, IP, Port)
+	local Result = sendto_(self.Socket, datagram, #datagram, 0, IP, Port)
 	if Result == SOCKET_ERROR then
 		return nil, socket_strerror(ffi.errno())
 	end
@@ -1797,7 +1825,7 @@ function TUDPStream:sendto(datagram, ip, port)
 		return nil, socket_strerror(ffi.errno())
 	end
 
-	local Result = sendto_(self.Socket, datagram, self.SendSize, 0, ip, port)
+	local Result = sendto_(self.Socket, datagram, #datagram, 0, ip, port)
 	if Result == SOCKET_ERROR then
 		return nil, socket_strerror(ffi.errno())
 	end
@@ -2036,5 +2064,8 @@ else
 		return (Time.tv_sec + Time.tv_usec/1.0e6) - StartTime
 	end
 end
+
+-- socket.dns.* api
+socket.dns = {}
 
 return socket
