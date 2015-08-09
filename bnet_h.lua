@@ -5,7 +5,7 @@ local ffi = require("ffi")
 ffi.cdef [[
 	typedef uintptr_t SOCKET;
 	struct TUDPStream {
-		int Timeout;
+		unsigned int Timeout;
 		SOCKET Socket;
 
 		char * LocalIP;
@@ -24,7 +24,7 @@ ffi.cdef [[
 		bool UDP;
 	};
 	struct TTCPStream {
-		int * Timeouts;
+		unsigned int * Timeouts;
 		SOCKET Socket;
 
 		char * RemoteIP;

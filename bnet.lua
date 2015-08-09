@@ -22,8 +22,8 @@ local SD_RECEIVE = 0
 local SD_SEND = 1
 local SD_BOTH = 2
 
-local TCP_TIMEOUT = math.huge
-local UDP_TIMEOUT = math.huge
+local TCP_TIMEOUT = 255 + 256 ^ 2 + 256 ^ 3 + 256 ^ 4
+local UDP_TIMEOUT = 255 + 256 ^ 2 + 256 ^ 3 + 256 ^ 4
 
 local socket = {
 	_VERSION = "LuaSocket 2.0.2",
@@ -285,7 +285,7 @@ local IO_CLOSED = -2
 
 local function io_strerror(err)
 	if err == IO_DONE then
-		return nil
+		return "closed"
 	elseif err == IO_CLOSED then
 		return "closed"
 	elseif err == IO_TIMEOUT then
@@ -676,7 +676,7 @@ end
 function TUDPStream:Timeout(Recv)
 	assert(Recv)
 	if Recv >= 0 then
-		self.Timeout = Recv
+		self.Timeout = ffi.new("unsigned int", Recv or 0)
 	end
 end
 
@@ -818,7 +818,7 @@ function socket.CreateUDPStream(Port)
 	Stream.Socket = Socket
 	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
 	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
-	Stream.Timeout = UDP_TIMEOUT
+	Stream.Timeout = ffi.new("unsigned int", UDP_TIMEOUT or 0)
 	Stream.UDP = true
 
 	Stream.SendBuffer = ffi.new("byte [0]")
@@ -930,7 +930,7 @@ function TTCPStream:SetTimeout(Read, Accept)
 	assert(Accept)
 	if Read < 0 then Read = 0 end
 	if Accept < 0 then Accept = 0 end
-	self.Timeouts = ffi.new("int [2]", Read, Accept)
+	self.Timeouts = ffi.new("unsigned int [2]", Read, Accept)
 end
 
 function TTCPStream:Read(Buffer, Size)
@@ -1122,7 +1122,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
 	Stream.Age = socket.gettime()
-	Stream.Timeouts = ffi.new("int[2]")
+	Stream.Timeouts = ffi.new("unsigned int[2]")
 	Stream.TCP = true
 
 	return Stream
@@ -1197,7 +1197,7 @@ function socket.CreateTCPServer(Port, Backlog)
 	end
 
 	Stream.Age = socket.gettime()
-	Stream.Timeouts = ffi.new("int[2]")
+	Stream.Timeouts = ffi.new("unsigned int[2]")
 	Stream.TCP = true
 
 	return Stream
@@ -1238,7 +1238,7 @@ function TTCPStream:Accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
+	Stream.Timeouts = ffi.new("unsigned int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 	Stream.TCP = true
 	return Stream
 end
@@ -1281,7 +1281,7 @@ function TTCPStream:accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
+	Stream.Timeouts = ffi.new("unsigned int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 	Stream.TCP = true
 	return Stream
 end
@@ -1331,7 +1331,7 @@ function TTCPStream:bind(Address, Port)
 		self.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
 		self.LocalPort = ffi.new("unsigned short", LocalPort)
 
-		self.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
+		self.Timeouts = ffi.new("unsigned int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 		return true
 	end
 end
@@ -1450,10 +1450,6 @@ function TTCPStream:listen(backlog)
 end
 
 function TTCPStream:receive(pattern, prefix)
-	if self.Socket == INVALID_SOCKET then
-		return nil, "invalid socket"
-	end
-
 	local prefix = prefix or ""
 	if pattern == nil or pattern == "*a" then
 		local Buffer = ffi.new("byte [4096]")
@@ -1534,11 +1530,11 @@ end
 
 function TTCPStream:settimeout(value, mode)
 	if not mode then
-		self.Timeouts = ffi.new("int [2]", value, value)
+		self.Timeouts = ffi.new("unsigned int [2]", value, value)
 	elseif mode == "b" then
-		self.Timeouts = ffi.new("int [2]", value, self.Timeouts[1])
+		self.Timeouts = ffi.new("unsigned int [2]", value, self.Timeouts[1])
 	elseif mode == "t" then
-		self.Timeouts = ffi.new("int [2]", self.Timeouts[0], value)
+		self.Timeouts = ffi.new("unsigned int [2]", self.Timeouts[0], value)
 	end
 	return true
 end
@@ -1684,12 +1680,12 @@ function TUDPStream:setsockname(address, port)
 		if bind_(self.Socket, AF_INET, port or 0) == SOCKET_ERROR then
 			local BindError = ffi.errno()
 
-			local Error = sock.shutdown(Socket, SD_BOTH)
+			local Error = sock.shutdown(self.Socket, SD_BOTH)
 			if Error ~= 0 then
 				return nil, socket_strerror(Error)
 			end
 
-			local Error = closesocket_(Socket)
+			local Error = closesocket_(self.Socket)
 			if Error ~= 0 then
 				return nil, socket_strerror(Error)
 			end
@@ -1727,7 +1723,7 @@ function TUDPStream:setsockname(address, port)
 end
 
 function TUDPStream:settimeout(value)
-	self.Timeout = value
+	self.Timeout = ffi.new("unsigned int", value or 0)
 	return true
 end
 
@@ -1746,12 +1742,12 @@ end
 function socket.udp()
 	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
 	if Socket == INVALID_SOCKET then
-		return nil
+		return nil, socket_strerror(ffi.errno())
 	end
 
 	local Stream = ffi.new("struct TUDPStream")
 	Stream.Socket = Socket
-	Stream.Timeout = UDP_TIMEOUT
+	Stream.Timeout = ffi.new("unsigned int", UDP_TIMEOUT or 0)
 	Stream.UDP = true
 
 	Stream.SendBuffer = ffi.new("char [0]")
