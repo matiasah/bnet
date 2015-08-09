@@ -1,9 +1,10 @@
+-- LuaSocket-API like and BNet-API like source code
+-- Author: Matías "Starkkz" Hermosilla
+-- License: MIT
+
 local ffi = require("ffi")
 local bit = require("bit")
-
-ffi.cdef [[
-	void free (void* ptr);
-]]
+local sock = require("bnet_h")
 local C = ffi.C
 
 local SOMAXCONN = 128
@@ -21,132 +22,22 @@ local SD_RECEIVE = 0
 local SD_SEND = 1
 local SD_BOTH = 2
 
+local TCP_TIMEOUT = math.huge
+local UDP_TIMEOUT = math.huge
+
 local socket = {
 	_VERSION = "LuaSocket 2.0.2",
+	_BNETVERSION = "0.0.1",
 	_DEBUG = false
 }
 
-ffi.cdef [[
-	typedef uintptr_t SOCKET;
-	struct TUDPStream {
-		int Timeout;
-		SOCKET Socket;
-
-		char * LocalIP;
-		unsigned short LocalPort;
-
-		char * MessageIP;
-		unsigned short MessagePort;
-
-		char * RemoteIP;
-		unsigned short RemotePort;
-
-		int RecvSize;
-		int SendSize;
-		char * RecvBuffer;
-		char * SendBuffer;
-		bool UDP;
-	};
-	struct TTCPStream {
-		int * Timeouts;
-		SOCKET Socket;
-
-		char * RemoteIP;
-		unsigned short RemotePort;
-
-		char * LocalIP;
-		unsigned short LocalPort;
-
-		bool TCP;
-		int Received;
-		int Sent;
-		int Age;
-	};
-]]
-
 local FIONREAD
-local sock, ioctl_, fd_lib
+local ioctl_, fd_lib
 if ffi.os == "Windows" then
 	FIONREAD = 0x4004667F
 
-	sock = ffi.load("ws2_32")
-	ffi.cdef [[
-		typedef uint16_t u_short;
-		typedef uint32_t u_int;
-		typedef unsigned long u_long;
-		typedef unsigned char byte;
-		struct sockaddr {
-			unsigned short sa_family;
-			char sa_data[14];
-		};
-		struct in_addr {
-			uint32_t s_addr;
-		};
-		struct sockaddr_in {
-			short   sin_family;
-			unsigned short sin_port;
-			struct  in_addr sin_addr;
-			char    sin_zero[8];
-		};
-		typedef unsigned short WORD;
-		typedef struct WSAData {
-			WORD wVersion;
-			WORD wHighVersion;
-			char szDescription[257];
-			char szSystemStatus[129];
-			unsigned short iMaxSockets;
-			unsigned short iMaxUdpDg;
-			char *lpVendorInfo;
-		} WSADATA, *LPWSADATA;
-		typedef struct hostent {
-			char *h_name;
-			char **h_aliases;
-			short h_addrtype;
-			short h_length;
-			byte **h_addr_list;
-		};
-		typedef struct timeval {
-			long tv_sec;
-			long tv_usec;
-		} timeval;
-		typedef struct fd_set {
-			u_int fd_count;
-			SOCKET  fd_array[64];
-		} fd_set;
-		u_long htonl(u_long hostlong);
-		u_short htons(u_short hostshort);
-		u_short ntohs(u_short netshort);
-		u_long ntohl(u_long netlong);
-		unsigned long inet_addr(const char *cp);
-		char *inet_ntoa(struct in_addr in);
-		SOCKET socket(int af, int type, int protocol);
-		SOCKET accept(SOCKET s,struct sockaddr *addr,int *addrlen);
-		int bind(SOCKET s, const struct sockaddr *name, int namelen);
-		int closesocket(SOCKET s);
-		int connect(SOCKET s, const struct sockaddr *name, int namelen);
-		int getsockname(SOCKET s, struct sockaddr *addr, int *namelen);
-		int getpeername(SOCKET s, struct sockaddr *name, int *namelen);
-		int ioctlsocket(SOCKET s, long cmd, u_long * argp);
-		int listen(SOCKET s, int backlog);
-		int recv(SOCKET s, char *buf, int len, int flags);
-		int recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen);
-		int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timeval *timeout);
-		int send(SOCKET s, const char *buf, int len, int flags);
-		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
-		int shutdown(SOCKET s, int how);
-		struct hostent *gethostbyname(const char *name);
-		struct hostent *gethostbyaddr(const char *addr, int len, int type);
-
-		int __WSAFDIsSet(SOCKET fd, fd_set * set);
-		int WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData);
-		int WSACleanup(void);
-
-		int WSAGetLastError(void);
-
-		int atexit(void (__cdecl * func)( void));
-	]]
-
-	sock.WSAStartup(0x101, ffi.new("WSADATA"))
+	local WSADATA = ffi.new("WSADATA")
+	sock.WSAStartup(0x101, WSADATA)
 	ffi.C.atexit(sock.WSACleanup)
 
 	fd_lib = {
@@ -189,63 +80,6 @@ if ffi.os == "Windows" then
 	end
 else
 	sock = ffi.C
-	ffi.cdef [[
-		typedef uint16_t u_short;
-		typedef uint32_t u_int;
-		typedef unsigned long u_long;
-		typedef unsigned char byte;
-		struct sockaddr {
-			unsigned short sa_family;
-			char sa_data[14];
-		};
-		struct in_addr {
-			uint32_t s_addr;
-		};
-		struct sockaddr_in {
-			short   sin_family;
-			u_short sin_port;
-			struct  in_addr sin_addr;
-			char    sin_zero[8];
-		};
-		typedef struct hostent {
-			char *h_name;
-			char **h_aliases;
-			short h_addrtype;
-			short h_length;
-			byte **h_addr_list;
-		};
-		typedef struct timeval {
-			long int tv_sec;
-			long int tv_usec;
-		};
-		typedef struct fd_set {
-			u_int fd_count;
-			SOCKET  fd_array[64];
-		} fd_set;
-		u_long htonl(u_long hostlong);
-		u_short htons(u_short hostshort);
-		u_short ntohs(u_short netshort);
-		u_long ntohl(u_long netlong);
-		unsigned long inet_addr(const char *cp);
-		char *inet_ntoa(struct in_addr in);
-		SOCKET socket(int af, int type, int protocol);
-		SOCKET accept(SOCKET s,struct sockaddr *addr,int *addrlen);
-		int bind(SOCKET s, const struct sockaddr *name, int namelen);
-		int close(SOCKET s);
-		int connect(SOCKET s, const struct sockaddr *name, int namelen);
-		int getsockname(SOCKET s, struct sockaddr *addr, int *namelen);
-		int getpeername(SOCKET s, struct sockaddr *addr, int *namelen);
-		int ioctl(SOCKET s, long cmd, u_long *argp);
-		int listen(SOCKET s, int backlog);
-		int recv(SOCKET s, char *buf, int len, int flags);
-		int recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen);
-		int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timeval *timeout);
-		int send(SOCKET s, const char *buf, int len, int flags);
-		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
-		int shutdown(SOCKET s, int how);
-		struct hostent *gethostbyname(const char *name);
-		struct hostent *gethostbyaddr(const char *addr, int len, int type);
-	]]
 
 	fd_lib = {
 		FD_CLR = function (fd, set)
@@ -622,9 +456,6 @@ if ffi.os == "Windows" then
 		return wstrerror(err)
 	end
 else
-	ffi.cdef [[
-		char * strerror(int errnum);
-	]]
 	function socket_strerror(err)
 		if err <= 0 then
 			return io_strerror(err)
@@ -744,36 +575,36 @@ end
 
 function TUDPStream:WriteByte(n)
 	local q = ffi.new("byte [1]")
-	q[0] = n % 256
+	q[0] = bit.band(n, 0xff)
 	return self:Write(q, 1)
 end
 
 function TUDPStream:WriteShort(n)
 	local q = ffi.new("byte [2]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff)
 	return self:Write(q, 2)
 end
 
 function TUDPStream:WriteInt(n)
 	local q = ffi.new("byte [4]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256; n = (n - q[1])/256
-	q[2] = n % 256; n = (n - q[2])/256
-	q[3] = n % 256; n = (n - q[3])/256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff); n = bit.rshift(n - q[1], 8)
+	q[2] = bit.band(n, 0xff); n = bit.rshift(n - q[2], 8)
+	q[3] = bit.band(n, 0xff)
 	return self:WriteBytes(q, 4)
 end
 
 function TUDPStream:WriteLong(n)
 	local q = ffi.new("byte [8]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256; n = (n - q[1])/256
-	q[2] = n % 256; n = (n - q[2])/256
-	q[3] = n % 256; n = (n - q[3])/256
-	q[4] = n % 256; n = (n - q[4])/256
-	q[5] = n % 256; n = (n - q[5])/256
-	q[6] = n % 256; n = (n - q[6])/256
-	q[7] = n % 256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff); n = bit.rshift(n - q[1], 8)
+	q[2] = bit.band(n, 0xff); n = bit.rshift(n - q[2], 8)
+	q[3] = bit.band(n, 0xff); n = bit.rshift(n - q[3], 8)
+	q[4] = bit.band(n, 0xff); n = bit.rshift(n - q[4], 8)
+	q[5] = bit.band(n, 0xff); n = bit.rshift(n - q[5], 8)
+	q[6] = bit.band(n, 0xff); n = bit.rshift(n - q[6], 8)
+	q[7] = bit.band(n, 0xff)
 	return self:WriteBytes(q, 8)
 end
 
@@ -987,6 +818,7 @@ function socket.CreateUDPStream(Port)
 	Stream.Socket = Socket
 	Stream.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
 	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
+	Stream.Timeout = UDP_TIMEOUT
 	Stream.UDP = true
 
 	Stream.SendBuffer = ffi.new("byte [0]")
@@ -1051,37 +883,36 @@ function TTCPStream:ReadString(Length)
 end
 
 function TTCPStream:WriteByte(n)
-	local q = ffi.new("byte [1]")
-	q[0] = n % 256
+	local q = ffi.new("byte [1]", bit.band(n, 0xff))
 	return self:Write(q, 1)
 end
 
 function TTCPStream:WriteShort(n)
 	local q = ffi.new("byte [2]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff)
 	return self:Write(q, 2)
 end
 
 function TTCPStream:WriteInt(n)
 	local q = ffi.new("byte [4]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256; n = (n - q[1])/256
-	q[2] = n % 256; n = (n - q[2])/256
-	q[3] = n % 256; n = (n - q[3])/256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff); n = bit.rshift(n - q[1], 8)
+	q[2] = bit.band(n, 0xff); n = bit.rshift(n - q[2], 8)
+	q[3] = bit.band(n, 0xff)
 	return self:WriteBytes(q, 4)
 end
 
 function TTCPStream:WriteLong(n)
 	local q = ffi.new("byte [8]")
-	q[0] = n % 256; n = (n - q[0])/256
-	q[1] = n % 256; n = (n - q[1])/256
-	q[2] = n % 256; n = (n - q[2])/256
-	q[3] = n % 256; n = (n - q[3])/256
-	q[4] = n % 256; n = (n - q[4])/256
-	q[5] = n % 256; n = (n - q[5])/256
-	q[6] = n % 256; n = (n - q[6])/256
-	q[7] = n % 256
+	q[0] = bit.band(n, 0xff); n = bit.rshift(n - q[0], 8)
+	q[1] = bit.band(n, 0xff); n = bit.rshift(n - q[1], 8)
+	q[2] = bit.band(n, 0xff); n = bit.rshift(n - q[2], 8)
+	q[3] = bit.band(n, 0xff); n = bit.rshift(n - q[3], 8)
+	q[4] = bit.band(n, 0xff); n = bit.rshift(n - q[4], 8)
+	q[5] = bit.band(n, 0xff); n = bit.rshift(n - q[5], 8)
+	q[6] = bit.band(n, 0xff); n = bit.rshift(n - q[6], 8)
+	q[7] = bit.band(n, 0xff)
 	return self:WriteBytes(q, 8)
 end
 
@@ -1158,11 +989,17 @@ function TTCPStream:Eof()
 end
 
 function TTCPStream:Close()
-	if self.Socket ~= INVALID_SOCKET then
-		sock.shutdown(self.Socket, SD_BOTH)
-		closesocket_(self.Socket)
-		self.Socket = INVALID_SOCKET
+	local Error = sock.shutdown(self.Socket, SD_BOTH)
+	if Error ~= 0 then
+		return nil, socket_strerror(Error)
 	end
+
+	local Error = closesocket_(self.Socket)
+	if Error ~= 0 then
+		return nil, socket_strerror(Error)
+	end
+	self.Socket = INVALID_SOCKET
+	return true
 end
 
 function TTCPStream:GetIP()
@@ -1401,7 +1238,7 @@ function TTCPStream:Accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int [2]")
+	Stream.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 	Stream.TCP = true
 	return Stream
 end
@@ -1444,13 +1281,15 @@ function TTCPStream:accept()
 	Stream.RemoteIP = ffi.new("char [?]", #RemoteIP, RemoteIP)
 	Stream.RemotePort = ffi.new("unsigned short", RemotePort)
 
-	Stream.Timeouts = ffi.new("int [2]")
+	Stream.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 	Stream.TCP = true
 	return Stream
 end
 
 function TTCPStream:bind(Address, Port)
-	if Address == "*" then
+	local Address = tostring(Address) or ""
+	local Port = tonumber(Port) or 0
+	if Address == "*" or Address == "localhost" then
 		if bind_(self.Socket, AF_INET, Port or 0) == SOCKET_ERROR then
 			local BindError = ffi.errno()
 
@@ -1492,7 +1331,7 @@ function TTCPStream:bind(Address, Port)
 		self.LocalIP = ffi.new("char [?]", #LocalIP, LocalIP)
 		self.LocalPort = ffi.new("unsigned short", LocalPort)
 
-		self.Timeouts = ffi.new("int [2]")
+		self.Timeouts = ffi.new("int [2]", TCP_TIMEOUT, TCP_TIMEOUT)
 		return true
 	end
 end
@@ -1575,6 +1414,20 @@ end
 function TTCPStream:getstats()
 	local Age = socket.gettime() - tonumber(self.Age)
 	return tonumber(self.Received), tonumber(self.Sent), Age
+end
+
+function TTCPStream:close()
+	local Error = sock.shutdown(self.Socket, SD_BOTH)
+	if Error ~= 0 then
+		return nil, socket_strerror(Error)
+	end
+
+	local Error = closesocket_(self.Socket)
+	if Error ~= 0 then
+		return nil, socket_strerror(Error)
+	end
+	self.Socket = INVALID_SOCKET
+	return true
 end
 
 function TTCPStream:listen(backlog)
@@ -1687,6 +1540,7 @@ function TTCPStream:settimeout(value, mode)
 	elseif mode == "t" then
 		self.Timeouts = ffi.new("int [2]", self.Timeouts[0], value)
 	end
+	return true
 end
 
 function TTCPStream:shutdown(mode)
@@ -1700,7 +1554,6 @@ function TTCPStream:shutdown(mode)
 end
 
 -- UDP streams
-
 function TUDPStream:close()
 	local Error = sock.shutdown(self.Socket, SD_BOTH)
 	if Error ~= 0 then
@@ -1739,15 +1592,8 @@ function TUDPStream:receive(size)
 		return nil, "timeout"
 	end
 
-	if self.RecvSize > 0 then
-		local NewBuffer = ffi.new("char [?]", self.RecvSize + Size)
-		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
-		self.RecvBuffer = NewBuffer
-	else
-		self.RecvBuffer = ffi.new("char [?]", Size)
-	end
-
-	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer + self.RecvSize, Size, 0)
+	local Buffer = ffi.new("char [?]", Size)
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
 		return nil, socket_strerror(ffi.errno())
 	end
@@ -1756,14 +1602,10 @@ function TUDPStream:receive(size)
 	self.RecvSize = self.RecvSize + Result
 
 	if self.RemoteIP == nil or self.RemotePort == nil then
-		return nil, "timeout"
+		return ffi.string(Buffer)
 	elseif MessageIP ~= ffi.string(self.RemoteIP) or MessagePort ~= tonumber(self.RemotePort) then
 		return nil, "timeout"
 	end
-
-	local Buffer = ffi.new("byte [?]", size)
-	self:Read(Buffer, size)
-
 	return ffi.string(Buffer)
 end
 
@@ -1783,25 +1625,14 @@ function TUDPStream:receivefrom(size)
 		return nil, "timeout"
 	end
 
-	if self.RecvSize > 0 then
-		local NewBuffer = ffi.new("char [?]", self.RecvSize + Size)
-		ffi.copy(NewBuffer, self.RecvBuffer, self.RecvSize)
-		self.RecvBuffer = NewBuffer
-	else
-		self.RecvBuffer = ffi.new("char [?]", Size)
-	end
-
-	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, self.RecvBuffer + self.RecvSize, Size, 0)
+	local Buffer = ffi.new("char [?]", Size)
+	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
-		print("timeout")
 		return nil, socket_strerror(ffi.errno())
 	end
 	self.MessageIP = MessageIP
 	self.MessagePort = MessagePort
 	self.RecvSize = self.RecvSize + Result
-
-	local Buffer = ffi.new("byte [?]", size)
-	self:Read(Buffer, size)
 
 	return ffi.string(Buffer), ffi.string(MessageIP), tonumber(MessagePort)
 end
@@ -1817,7 +1648,7 @@ function TUDPStream:send(datagram)
 	if Result == SOCKET_ERROR then
 		return nil, socket_strerror(ffi.errno())
 	end
-	return true
+	return Result
 end
 
 function TUDPStream:sendto(datagram, ip, port)
@@ -1833,18 +1664,23 @@ function TUDPStream:sendto(datagram, ip, port)
 end
 
 function TUDPStream:setpeername(address, port)
+	if address == nil or port == nil then
+		self.RemoteIP = nil
+		self.RemotePort = nil
+	end
 	if self.LocalPort == 0 then
 		local Bind, Error = self:setsockname("*", 0)
 		if Bind == nil then
 			return nil, Error
 		end
 	end
-	self.RemoteIP = address
-	self.RemotePort = port
+	self.RemoteIP = ffi.new("char [?]", #address, tostring(address))
+	self.RemotePort = tonumber(port) or 0
+	return true
 end
 
 function TUDPStream:setsockname(address, port)
-	if address == "*" then
+	if address == "*" or address == "localhost" then
 		if bind_(self.Socket, AF_INET, port or 0) == SOCKET_ERROR then
 			local BindError = ffi.errno()
 
@@ -1892,9 +1728,9 @@ end
 
 function TUDPStream:settimeout(value)
 	self.Timeout = value
+	return true
 end
 
--- socket.tcp()
 function socket.tcp()
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
@@ -1907,7 +1743,6 @@ function socket.tcp()
 	return Stream
 end
 
--- socket.udp()
 function socket.udp()
 	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
 	if Socket == INVALID_SOCKET then
@@ -1916,6 +1751,7 @@ function socket.udp()
 
 	local Stream = ffi.new("struct TUDPStream")
 	Stream.Socket = Socket
+	Stream.Timeout = UDP_TIMEOUT
 	Stream.UDP = true
 
 	Stream.SendBuffer = ffi.new("char [0]")
@@ -1923,8 +1759,6 @@ function socket.udp()
 	return Stream
 end
 
-
--- socket.protect(func)
 function socket.protect(func)
 	return function (...)
 		local Args = {pcall(func, ...)}
@@ -1939,7 +1773,6 @@ function socket.protect(func)
 	end
 end
 
--- socket.select(recvt, sendt [, timeout])
 function socket.select(recvt, sendt, timeout)
 	if type(recvt) == "table" then
 		local ReceiveTable = {}
@@ -1963,7 +1796,6 @@ function socket.select(recvt, sendt, timeout)
 	end
 end
 
--- socket.skip(d [, ret1, ret2 ... retN])
 function socket.skip(d, ...)
 	local skip = {}
 	for Key, Value in pairs({...}) do
@@ -1974,14 +1806,15 @@ function socket.skip(d, ...)
 	return unpack(skip)
 end
 
--- socket.bind(address, port [, backlog])
 function socket.bind(address, port, backlog)
+	local address = address and tostring(address) or "*"
+	local port = tonumber(port) or 0
 	local Stream, Error = socket.tcp()
 	if Stream == nil then
 		return nil, Error
 	end
 
-	local Bind, Error = Stream:bind(address or "*", port)
+	local Bind, Error = Stream:bind(address, port)
 	if Bind == nil then
 		return nil, Error
 	end
@@ -1993,8 +1826,10 @@ function socket.bind(address, port, backlog)
 	return Stream
 end
 
--- socket.connect(address, port [, locaddr, locport])
 function socket.connect(address, port, locaddr, locport)
+	local port = tonumber(port) or 0
+	local locport = tonumber(locport) or 0
+
 	local Stream, Error = socket.tcp()
 	if Stream == nil then
 		return nil, Error
@@ -2012,34 +1847,17 @@ function socket.connect(address, port, locaddr, locport)
 	return Stream
 end
 
--- socket.sleep(time)
 if ffi.os == "Windows" then
-	ffi.cdef [[void Sleep(int ms);]]
 	function socket.sleep(t)
 		C.Sleep(t * 1000)
 	end
 else
-	ffi.cdef [[int poll(struct pollfd * fds, unsigned long nfds, int timeout);]]
 	function socket.sleep(t)
 		C.poll(nil, 0, s * 1000)
 	end
 end
 
--- socket.gettime()
 if ffi.os == "Windows" then
-	ffi.cdef [[
-		typedef struct _SYSTEMTIME {
-			WORD wYear;
-			WORD wMonth;
-			WORD wDayOfWeek;
-			WORD wDay;
-			WORD wHour;
-			WORD wMinute;
-			WORD wSecond;
-			WORD wMilliseconds;
-		} SYSTEMTIME, *PSYSTEMTIME, *LPSYSTEMTIME;;
-		void GetSystemTime(LPSYSTEMTIME lpSystemTime);
-	]]
 	local Start = ffi.new("SYSTEMTIME"); C.GetSystemTime(Start)
 	local StartTime = Start.wSecond + Start.wMilliseconds/1000
 
@@ -2048,14 +1866,6 @@ if ffi.os == "Windows" then
 		return (Time.wSecond + Time.wMilliseconds/1000) - StartTime
 	end
 else
-	ffi.cdef [[
-		struct timezone {
-			int tz_minuteswest;
-			int tz_dsttime;
-		};
-		int gettimeofday(struct timeval * tv, struct timezone * tz);
-	]]
-
 	local Start = ffi.new("struct timeval"); C.gettimeofday(Start, nil)
 	local StartTime = Start.tv_sec + Start.tv_usec/1.0e6
 
