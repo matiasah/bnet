@@ -16,13 +16,13 @@ Why is it called bnet?
 Because it's first version was intended to be a port from the BNet library for BlitzMax in Lua,
 but later it was improved to be API compatible with the traditional LuaSocket library.
 
-## API
+# API
 
 ------------------------- ----------------------------------------------------
-#DNS (in socket)
-#Socket
-#TCP (in socket)
-#UDP (in socket)
+##DNS (in socket)
+##Socket
+##TCP (in socket)
+##UDP (in socket)
 ------------------------- ----------------------------------------------------
 
-## Notes
+# Notes
