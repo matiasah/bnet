@@ -27,7 +27,7 @@ local UDP_TIMEOUT = 255 + 256 ^ 2 + 256 ^ 3 + 256 ^ 4
 
 local socket = {
 	_VERSION = "LuaSocket 2.0.2",
-	_BNETVERSION = "0.0.1",
+	_BNETVERSION = "0.0.3",
 	_DEBUG = false
 }
 
@@ -1547,6 +1547,7 @@ function TTCPStream:shutdown(mode)
 	elseif mode == "receive" then
 		sock.shutdown(self.Socket, SD_RECEIVE)
 	end
+	return 1
 end
 
 -- UDP streams
