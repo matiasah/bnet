@@ -19,6 +19,10 @@ but later it was improved to be API compatible with the traditional LuaSocket li
 ## API
 
 ------------------------- ----------------------------------------------------
+#DNS (in socket)
+#Socket
+#TCP (in socket)
+#UDP (in socket)
 ------------------------- ----------------------------------------------------
 
 ## Notes
