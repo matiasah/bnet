@@ -19,12 +19,12 @@ but later it was improved to be API compatible with the traditional LuaSocket li
 # API
 
 ------------------------------ ----------------------------------------------------
-##DNS (in socket)
+__DNS (in socket)__
 socket.dns.gethostname()       Returns the standard host name for the machine as a string.
 socket.dns.tohostname(address) Converts from IP address to host name. Address can be an IP address or host name. The function returns a string with the canonic host name of the given address, followed by a table with all information returned by the resolver. In case of error, the function returns nil followed by an error message.
-##Socket
-##TCP (in socket)
-##UDP (in socket)
+__Socket__
+__TCP (in socket)__
+__UDP (in socket)__
 ------------------------------ ----------------------------------------------------
 
 # Notes
