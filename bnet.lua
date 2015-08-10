@@ -4,7 +4,7 @@
 
 local ffi = require("ffi")
 local bit = require("bit")
-local sock = require("bnet_h")
+local sock, errno = unpack(require("bnet_h"))
 local C = ffi.C
 
 local SOMAXCONN = 128
@@ -188,7 +188,7 @@ local function connect_(socket, addr, addr_type, addr_len, port)
 	return SOCKET_ERROR
 end
 
-local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, millis)
+local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, timeout)
 	local r_set = ffi.new("fd_set")
 	local w_set = ffi.new("fd_set")
 	local e_set = ffi.new("fd_set")
@@ -229,15 +229,15 @@ local function select_(n_read, r_socks, n_write, w_socks, n_except, e_socks, mil
 		end
 	end
 
-	local tvp
-	if millis < 0 then
-		tvp = ffi.new("struct timeval[0]")
+	local TimevalPtr
+	if timeout < 0 then
+		TimevalPtr = ffi.new("struct timeval[0]")
 	else
-		local tv = ffi.new("struct timeval", {tv_sec = millis / 1000, tv_usec = (millis % 1000) / 1000})
-		tvp = ffi.new("struct timeval [1]", tv)
+		local Timeval = ffi.new("struct timeval", {tv_sec = timeout / 1000, tv_usec = (timeout % 1000) / 1000})
+		TimevalPtr = ffi.new("struct timeval [1]", Timeval)
 	end
 
-	local r = sock.select(n + 1, r_set, w_set, e_set, tvp)
+	local r = sock.select(n + 1, r_set, w_set, e_set, TimevalPtr)
 	if r < 0 then
 		return r
 	end
@@ -478,7 +478,7 @@ else
 	end
 end
 
-function CountHostIPs(Host)
+function socket.CountHostIPs(Host)
 	assert(Host)
 	local Addresses, AdressType, AddressLength = gethostbyname_(Host)
 	if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
@@ -492,7 +492,7 @@ function CountHostIPs(Host)
 	return Count
 end
 
-function IntIP(IP)
+function socket.IntIP(IP)
 	local ServerIP = sock.inet_addr(IP)
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(IP)
@@ -508,7 +508,7 @@ function IntIP(IP)
 	return 0
 end
 
-function StringIP(IP)
+function socket.StringIP(IP)
 	assert(IP)
 	local HTONL = sock.htonl(IP)
 	local Addr = ffi.new("struct in_addr")
@@ -775,7 +775,7 @@ function socket.CreateUDPStream(Port)
 	end
 
 	if bind_(Socket, AF_INET, Port) == SOCKET_ERROR then
-		local BindError = ffi.errno()
+		local BindError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -796,7 +796,7 @@ function socket.CreateUDPStream(Port)
 	SizePtr[0] = ffi.sizeof(Address)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetSockNameError = ffi.errno()
+		local GetSockNameError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -972,7 +972,7 @@ end
 function TTCPStream:Size()
 	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	return Size[0]
 end
@@ -1017,7 +1017,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	local ServerIP = sock.inet_addr(Server)
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(Server)
-		local Errno = ffi.errno()
+		local Errno = errno()
 		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
 			return nil, socket_strerror(Errno)
 		end
@@ -1030,11 +1030,11 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	if bind_(Socket, AF_INET, LocalPort) == SOCKET_ERROR then
-		local BindError = ffi.errno()
+		local BindError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1055,7 +1055,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	SizePtr[0] = ffi.sizeof(SAddress)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetSockNameError = ffi.errno()
+		local GetSockNameError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1080,7 +1080,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 
 	local ServerPtr = ffi.new("int[1]", ServerIP)
 	if connect_(Socket, ServerPtr, AF_INET, 4, ServerPort) == SOCKET_ERROR then
-		local ConnectError = ffi.errno()
+		local ConnectError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1100,7 +1100,7 @@ function socket.OpenTCPStream(Server, ServerPort, LocalPort)
 	local SizePtr = ffi.new("int [1]", ffi.sizeof(RemoteAddress))
 
 	if sock.getpeername(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetPeerNameError = ffi.errno()
+		local GetPeerNameError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1132,11 +1132,11 @@ function socket.CreateTCPServer(Port, Backlog)
 	local Port = Port or 0
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	if bind_(Socket, AF_INET, Port) == SOCKET_ERROR then
-		local BindError = ffi.errno()
+		local BindError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1157,7 +1157,7 @@ function socket.CreateTCPServer(Port, Backlog)
 	SizePtr[0] = ffi.sizeof(SAddress)
 
 	if sock.getsockname(Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetSockNameError = ffi.errno()
+		local GetSockNameError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1181,7 +1181,7 @@ function socket.CreateTCPServer(Port, Backlog)
 	Stream.LocalPort = ffi.new("unsigned short", LocalPort)
 
 	if sock.listen(Socket, Backlog or SOMAXCONN) == SOCKET_ERROR then
-		local ListenError = ffi.errno()
+		local ListenError = errno()
 
 		local Error = sock.shutdown(Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1211,7 +1211,7 @@ function TTCPStream:Accept()
 	local Select = select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeouts[1])
 	if Select ~= 1 then
 		if Select == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
+			return nil, socket_strerror(errno())
 		end
 		return nil, "timeout"
 	end
@@ -1222,7 +1222,7 @@ function TTCPStream:Accept()
 
 	local Socket = sock.accept(self.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
@@ -1254,7 +1254,7 @@ function TTCPStream:accept()
 	local Select = select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeouts[1])
 	if Select ~= 1 then
 		if Select == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
+			return nil, socket_strerror(errno())
 		end
 		return nil, "timeout"
 	end
@@ -1265,7 +1265,7 @@ function TTCPStream:accept()
 
 	local Socket = sock.accept(self.Socket, Addr, SizePtr)
 	if Socket == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
@@ -1291,7 +1291,7 @@ function TTCPStream:bind(Address, Port)
 	local Port = tonumber(Port) or 0
 	if Address == "*" or Address == "localhost" then
 		if bind_(self.Socket, AF_INET, Port or 0) == SOCKET_ERROR then
-			local BindError = ffi.errno()
+			local BindError = errno()
 
 			local Error = sock.shutdown(self.Socket, SD_BOTH)
 			if Error ~= 0 then
@@ -1310,7 +1310,7 @@ function TTCPStream:bind(Address, Port)
 		local SizePtr = ffi.new("int [1]", ffi.sizeof(SockAddress))
 
 		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
-			local GetSockNameError = ffi.errno()
+			local GetSockNameError = errno()
 
 			local Error = sock.shutdown(self.Socket, SD_BOTH)
 			if Error ~= 0 then
@@ -1347,7 +1347,7 @@ function TTCPStream:connect(address, port)
 	local ServerIP = sock.inet_addr(address)
 	if ServerIP == INADDR_NONE then
 		local Addresses, AddressType, AddressLength = gethostbyname_(address)
-		local Errno = ffi.errno()
+		local Errno = errno()
 		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
 			return nil, socket_strerror(Errno)
 		end
@@ -1360,7 +1360,7 @@ function TTCPStream:connect(address, port)
 
 	local ServerPtr = ffi.new("int [1]", ServerIP)
 	if connect_(self.Socket, ServerPtr, AF_INET, 4, port) == SOCKET_ERROR then
-		local ConnectError = ffi.errno()
+		local ConnectError = errno()
 
 		local Error = sock.shutdown(self.Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1380,7 +1380,7 @@ function TTCPStream:connect(address, port)
 	local SizePtr = ffi.new("int [1]", ffi.sizeof(PeerAddress))
 
 	if sock.getpeername(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
-		local GetPeerNameError = ffi.errno()
+		local GetPeerNameError = errno()
 
 		local Error = sock.shutdown(self.Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1432,7 +1432,7 @@ end
 
 function TTCPStream:listen(backlog)
 	if sock.listen(self.Socket, backlog or SOMAXCONN) == SOCKET_ERROR then
-		local ListenError = ffi.errno()
+		local ListenError = errno()
 
 		local Error = sock.shutdown(self.Socket, SD_BOTH)
 		if Error ~= 0 then
@@ -1455,7 +1455,7 @@ function TTCPStream:receive(pattern, prefix)
 		local Buffer = ffi.new("byte [4096]")
 		local Result = sock.recv(self.Socket, Buffer, 4096, 0)
 		if Result == SOCKET_ERROR then
-			return nil, socket_strerror(ffi.errno())
+			return nil, socket_strerror(errno())
 		end
 
 		self.Received = self.Received + ffi.sizeof(Buffer)
@@ -1466,7 +1466,7 @@ function TTCPStream:receive(pattern, prefix)
 			local Buffer = ffi.new("byte [1]")
 			local Result = sock.recv(self.Socket, Buffer, 1, 0)
 			if Result == SOCKET_ERROR then
-				return nil, socket_strerror(ffi.errno())
+				return nil, socket_strerror(errno())
 			end
 
 			self.Received = self.Received + 1
@@ -1484,7 +1484,7 @@ function TTCPStream:receive(pattern, prefix)
 			local Buffer = ffi.new("byte [?]", Size)
 			local Result = sock.recv(self.Socket, Buffer, Size, 0)
 			if Result == SOCKET_ERROR then
-				return nil, socket_strerror(ffi.errno())
+				return nil, socket_strerror(errno())
 			end
 			self.Received = self.Received + ffi.sizeof(Buffer)
 			return prefix .. ffi.string(Buffer)
@@ -1511,12 +1511,12 @@ function TTCPStream:send(data, i, j)
 
 	local Select = select_(1, nil, 1, {self.Socket}, 0, nil, 0)
 	if Select == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Result = sock.send(self.Socket, data, #data, 0)
 	if Result == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	self.Sent = self.Sent + #data
 	return Result
@@ -1575,12 +1575,12 @@ end
 function TUDPStream:receive(size)
 	local size = size or 4096
 	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	Size = Size[0]
@@ -1591,7 +1591,7 @@ function TUDPStream:receive(size)
 	local Buffer = ffi.new("char [?]", Size)
 	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	self.MessageIP = MessageIP
 	self.MessagePort = MessagePort
@@ -1608,12 +1608,12 @@ end
 function TUDPStream:receivefrom(size)
 	local size = size or 4096
 	if select_(1, {self.Socket}, 0, nil, 0, nil, self.Timeout) == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Size = ffi.new("int [1]")
 	if ioctl_(self.Socket, FIONREAD, Size) == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	Size = Size[0]
@@ -1624,7 +1624,7 @@ function TUDPStream:receivefrom(size)
 	local Buffer = ffi.new("char [?]", Size)
 	local Result, MessageIP, MessagePort = recvfrom_(self.Socket, Buffer, Size, 0)
 	if Result == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	self.MessageIP = MessageIP
 	self.MessagePort = MessagePort
@@ -1635,26 +1635,26 @@ end
 
 function TUDPStream:send(datagram)
 	if select_(0, nil, 1, {self.Socket}, 0, nil, 0) ~= 1 then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local IP = ffi.string(self.RemoteIP) or ""
 	local Port = self.RemotePort or 0
 	local Result = sendto_(self.Socket, datagram, #datagram, 0, IP, Port)
 	if Result == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	return Result
 end
 
 function TUDPStream:sendto(datagram, ip, port)
 	if select_(0, nil, 1, {self.Socket}, 0, nil, 0) ~= 1 then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Result = sendto_(self.Socket, datagram, #datagram, 0, ip, port)
 	if Result == SOCKET_ERROR then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 	return true
 end
@@ -1678,7 +1678,7 @@ end
 function TUDPStream:setsockname(address, port)
 	if address == "*" or address == "localhost" then
 		if bind_(self.Socket, AF_INET, port or 0) == SOCKET_ERROR then
-			local BindError = ffi.errno()
+			local BindError = errno()
 
 			local Error = sock.shutdown(self.Socket, SD_BOTH)
 			if Error ~= 0 then
@@ -1698,7 +1698,7 @@ function TUDPStream:setsockname(address, port)
 		local SizePtr = ffi.new("int[1]", ffi.sizeof(Address))
 
 		if sock.getsockname(self.Socket, Addr, SizePtr) == SOCKET_ERROR then
-			local GetSockNameError = ffi.errno()
+			local GetSockNameError = errno()
 
 			local Error = sock.shutdown(Socket, SD_BOTH)
 			if Error ~= 0 then
@@ -1730,7 +1730,7 @@ end
 function socket.tcp()
 	local Socket = sock.socket(AF_INET, SOCK_STREAM, 0)
 	if Socket == INVALID_SOCKET then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Stream = ffi.new("struct TTCPStream")
@@ -1742,7 +1742,7 @@ end
 function socket.udp()
 	local Socket = sock.socket(AF_INET, SOCK_DGRAM, 0)
 	if Socket == INVALID_SOCKET then
-		return nil, socket_strerror(ffi.errno())
+		return nil, socket_strerror(errno())
 	end
 
 	local Stream = ffi.new("struct TUDPStream")
@@ -1756,16 +1756,14 @@ function socket.udp()
 end
 
 function socket.protect(func)
-	return function (...)
-		local Args = {pcall(func, ...)}
-		if Args[1] then
-			local Args2 = {}
-			Args[1] = nil
-			for k, v in pairs(Args) do
-				Args2[k - 1] = v
-			end
-			return unpack(Args2)
+	local function pass(ok, ...)
+		if ok then
+			return ...
 		end
+		return nil, ...
+	end
+	return function(...)
+		return pass(pcall(func, ...))
 	end
 end
 
@@ -1783,7 +1781,7 @@ function socket.select(recvt, sendt, timeout)
 
 		local Select = select_(#ReceiveTable, ReceiveTable, #SendTable, SendTable, 0, nil, timeout or 0)
 		if Select == SOCKET_ERROR then
-			return nil, nil, socket_strerror(ffi.errno())
+			return nil, nil, socket_strerror(errno())
 		end
 
 		table.sort(ReceiveTable)
@@ -1873,5 +1871,49 @@ end
 
 -- socket.dns.* api
 socket.dns = {}
+
+function socket.dns.gethostname()
+	local Name = ffi.new("char [256]")
+	if sock.gethostname(Name, 256) == SOCKET_ERROR then
+		return nil, socket_strerror(errno())
+	end
+	return ffi.string(Name)
+end
+
+function socket.dns.tohostname(address)
+end
+
+function socket.dns.toip(address)
+	local address = address or ""
+	local AddrIP = sock.inet_addr(address)
+	if AddrIP == INADDR_NONE then
+		local Addresses, AddressType, AddressLength = gethostbyname_(address)
+		if Addresses == nil or AddressType ~= AF_INET or AddressLength ~= 4 then
+			return nil, socket_strerror(errno())
+		end
+		local PrimaryAddress = Addresses[0]
+		if PrimaryAddress == nil then
+			return nil, socket_strerror(errno())
+		end
+
+		local Information = {
+			ip = {},
+			name = address,
+			alias = {}
+		}
+
+		local Count = 0
+		while Addresses[Count] ~= nil do
+			local Address = Addresses[Count]
+			local IntAddr = bit.bor(bit.lshift(Address[3], 24), bit.lshift(Address[2], 16), bit.lshift(Address[1], 8), Address[0])
+			local in_addr = ffi.new("struct in_addr", {s_addr = IntAddr})
+			local NTOA = sock.inet_ntoa(in_addr)
+			Information.ip[Count + 1] = ffi.string(NTOA)
+			Count = Count + 1
+		end
+		return Information.ip[1], Information
+	end
+	return nil, socket_strerror(errno())
+end
 
 return socket

@@ -105,6 +105,7 @@ if ffi.os == "Windows" then
 		int send(SOCKET s, const char *buf, int len, int flags);
 		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
 		int shutdown(SOCKET s, int how);
+		int gethostname(char *name, int  namelen);
 		struct hostent *gethostbyname(const char *name);
 		struct hostent *gethostbyaddr(const char *addr, int len, int type);
 
@@ -129,14 +130,20 @@ if ffi.os == "Windows" then
 		} SYSTEMTIME, *PSYSTEMTIME, *LPSYSTEMTIME;;
 		void GetSystemTime(LPSYSTEMTIME lpSystemTime);
 	]]
+	local SocketLibrary = ffi.load("ws2_32")
 
-	return ffi.load("ws2_32")
+	local function ErrorFunction()
+		return tonumber(SocketLibrary.WSAGetLastError())
+	end
+
+	return {SocketLibrary, ErrorFunction}
 else
 	ffi.cdef [[
 		typedef uint16_t u_short;
 		typedef uint32_t u_int;
 		typedef unsigned long u_long;
 		typedef unsigned char byte;
+		typedef unsigned long size_t;
 		struct sockaddr {
 			unsigned short sa_family;
 			char sa_data[14];
@@ -186,6 +193,7 @@ else
 		int send(SOCKET s, const char *buf, int len, int flags);
 		int sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen);
 		int shutdown(SOCKET s, int how);
+		int gethostname(char *name, size_t len);
 		struct hostent *gethostbyname(const char *name);
 		struct hostent *gethostbyaddr(const char *addr, int len, int type);
 
@@ -199,5 +207,5 @@ else
 		int gettimeofday(struct timeval * tv, struct timezone * tz);
 	]]
 
-	return ffi.C
+	return {ffi.C, ffi.errno}
 end
