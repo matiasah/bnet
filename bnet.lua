@@ -1529,12 +1529,10 @@ function TTCPStream:setstats(received, sent, age)
 end
 
 function TTCPStream:settimeout(value, mode)
-	if not mode then
+	if mode == nil or mode == "t" then
 		self.Timeouts = ffi.new("unsigned int [2]", value, value)
 	elseif mode == "b" then
 		self.Timeouts = ffi.new("unsigned int [2]", value, self.Timeouts[1])
-	elseif mode == "t" then
-		self.Timeouts = ffi.new("unsigned int [2]", self.Timeouts[0], value)
 	end
 	return true
 end
