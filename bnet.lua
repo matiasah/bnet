@@ -1451,7 +1451,7 @@ end
 
 function TTCPStream:receive(pattern, prefix)
 	local prefix = prefix or ""
-	if pattern == nil or pattern == "*a" then
+	if pattern == "*a" then
 		local Buffer = ffi.new("byte [4096]")
 		local Result = sock.recv(self.Socket, Buffer, 4096, 0)
 		if Result == SOCKET_ERROR then
@@ -1460,7 +1460,7 @@ function TTCPStream:receive(pattern, prefix)
 
 		self.Received = self.Received + ffi.sizeof(Buffer)
 		return prefix .. ffi.string(Buffer)
-	elseif pattern == "*l" then
+	elseif pattern == nil or pattern == "*l" then
 		local Line = ""
 		repeat
 			local Buffer = ffi.new("byte [1]")
