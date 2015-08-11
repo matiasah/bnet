@@ -3,7 +3,7 @@ tagline: networking library
 platforms: mingw32, mingw64
 ---
 
-<warn>Work in progress! To be released when?</warn>
+<warn>Work in progress! To be released soon!</warn>
 
 ## `local bnet = require'bnet'`
 
